@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Admin Withdrawals - Calmtel</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="adm-wrap">
+    <div id="adm-nav"></div>
+    <h2 class="adm-title">Withdrawal Pipeline</h2>
+
+    <div class="adm-stats">
+      <div class="adm-stat"><b id="cPending">0</b><span>Pending</span></div>
+      <div class="adm-stat"><b id="cSent">0</b><span>Sent</span></div>
+      <div class="adm-stat"><b id="cDone">0</b><span>Approved</span></div>
+    </div>
+
+    <div class="adm-tabs">
+      <div class="adm-tab on" data-t="pending">Pending</div>
+      <div class="adm-tab" data-t="sent">Sent</div>
+      <div class="adm-tab" data-t="approved">Approved</div>
+      <div class="adm-tab" data-t="rejected">Rejected</div>
+    </div>
+    <div id="list"></div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null, TAB = 'pending';
+
+    async function act(id, action) {
+      const msgs = {
+        send: 'Send this withdrawal to pcmedia for payout?',
+        resend: 'Resend this withdrawal to pcmedia?',
+        approve: 'Confirm payout completed — mark APPROVED?',
+        reject: 'Reject and REFUND the user?'
+      };
+      if (!confirm(msgs[action])) return;
+      const res = await fetch('/api/withdraw/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+        body: JSON.stringify({ action, request_id: id })
+      });
+      const d = await res.json();
+      CniAuth.toast(d.ok ? (d.message || 'Done') : d.error, d.ok ? 'success' : 'error');
+      load();
+    }
+
+    async function load() {
+      const sb = window.sb;
+      const [{ count: cp }, { count: cs }, { count: ca }] = await Promise.all([
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved')
+      ]);
+      document.getElementById('cPending').textContent = cp || 0;
+      document.getElementById('cSent').textContent = cs || 0;
+      document.getElementById('cDone').textContent = ca || 0;
+
+      const { data: wds } = await sb.from('withdrawal_requests')
+        .select('*, users(full_name, email)').eq('status', TAB)
+        .order('created_at', { ascending: false }).limit(50);
+      const all = wds || [];
+      const list = document.getElementById('list');
+      if (!all.length) { list.innerHTML = '<div class="adm-empty">No ' + TAB + ' withdrawals.</div>'; return; }
+
+      list.innerHTML = all.map(w => `
+        <div class="adm-card">
+          <div class="adm-row-top">
+            <div>
+              <div class="adm-name">${w.users?.full_name || 'User'}</div>
+              <div class="adm-sub">${w.users?.email || ''}<br>
+                💳 ${w.recipient_name} • ${w.recipient_mobile} • ${(w.operator || '').toUpperCase()}<br>
+                Requested ${CniAuth.timeAgo(w.created_at)}${w.pcmedia_sent_at ? '<br>🔗 Sent ' + CniAuth.timeAgo(w.pcmedia_sent_at) : ''}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="adm-amt red">${fmt(w.amount)}</div>
+              <div class="adm-sub">Fee ${fmt(w.fee_amount)} • Pay <b style="color:var(--cni-green)">${fmt(w.net_amount)}</b></div>
+              <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
+            </div>
+          </div>
+          ${w.admin_note ? `<div class="adm-sub" style="margin-top:8px;">📝 ${w.admin_note}</div>` : ''}
+          ${TAB === 'pending' ? `
+          <div class="adm-actions">
+            <button class="adm-btn warn" onclick="act('${w.id}','send')">🔗 Send to pcmedia</button>
+            <button class="adm-btn ok" onclick="act('${w.id}','approve')">✓ Approve</button>
+            <button class="adm-btn no" onclick="act('${w.id}','reject')">✕ Refund</button>
+          </div>` : ''}
+          ${TAB === 'sent' ? `
+          <div class="adm-actions">
+            <button class="adm-btn ok" onclick="act('${w.id}','approve')">✓ Approve (paid)</button>
+            <button class="adm-btn warn" onclick="act('${w.id}','resend')">🔁 Resend</button>
+            <button class="adm-btn no" onclick="act('${w.id}','reject')">✕ Refund</button>
+          </div>` : ''}
+        </div>`).join('');
+    }
+
+    document.querySelector('.adm-tabs').addEventListener('click', e => {
+      const t = e.target.closest('.adm-tab'); if (!t) return;
+      document.querySelector('.adm-tab.on').classList.remove('on');
+      t.classList.add('on');
+      TAB = t.dataset.t; load();
+    });
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      SESSION = await CniAuth.adminGuard();
+      if (!SESSION) return;
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.adminNav('withdrawals');
+      load();
+    });
+  </script>
+</body>
+</html>
