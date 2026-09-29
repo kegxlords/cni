@@ -18,15 +18,6 @@
     </div>
 
     <div class="card glow rise d2">
-      <div class="sec" style="margin-top:0;">Investment Packages — 15 Days</div>
-      <table class="tbl">
-        <thead><tr><th>Package</th><th>Daily</th><th>Total (15d)</th><th>Days</th></tr></thead>
-        <tbody id="pkgTable"></tbody>
-      </table>
-      <div class="mut" style="margin-top:10px;text-align:center;">30% referral commission • 8% withdrawal charge • Min withdrawal 1,500 FCFA</div>
-    </div>
-
-    <div class="card rise d3">
       <div class="sec" style="margin-top:0;">Member Login</div>
       <form id="loginForm">
         <label class="lbl">Email</label>
@@ -36,6 +27,14 @@
         <button class="btn primary" id="liBtn" type="submit">⚡ Login</button>
       </form>
       <a class="btn cyan" style="margin-top:10px;" href="/register">🌐 Create Account</a>
+    </div>
+
+    <div class="card rise d3" style="text-align:center;">
+      <div class="mut" style="font-size:12px;line-height:1.7;">
+        ⚡ 32.5% daily yield for 15 days<br>
+        👥 30% referral commission<br>
+        💸 Unlimited withdrawals • 8% charge
+      </div>
     </div>
 
     <div style="display:flex;gap:10px;justify-content:center;margin:16px 0 30px;">
@@ -55,15 +54,6 @@
       if (session) { location.href = '/dashboard'; return; }
       CniUI.header(null);
 
-      const { data: products } = await window.sb.from('products').select('*').eq('is_active', true).order('amount');
-      document.getElementById('pkgTable').innerHTML = (products || []).map(p => `
-        <tr>
-          <td class="amt">${Number(p.amount).toLocaleString()}</td>
-          <td>${Number(p.daily_income).toLocaleString()}</td>
-          <td class="gold">${(Number(p.daily_income) * 15).toLocaleString()}</td>
-          <td>15</td>
-        </tr>`).join('') || '<tr><td colspan="4">Loading packages…</td></tr>';
-
       const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
       if (s?.telegram_group_url) document.getElementById('tgGroup').href = s.telegram_group_url;
       if (s?.telegram_support_url) document.getElementById('tgSupport').href = s.telegram_support_url;
@@ -76,7 +66,8 @@
           await CniAuth.login(document.getElementById('liEmail').value.trim(), document.getElementById('liPass').value);
           location.href = '/dashboard';
         } catch (err) {
-          CniAuth.toast(err.message, 'error');
+          const msg = typeof err === 'string' ? err : (err?.message || 'Login failed');
+          CniAuth.toast(msg, 'error');
           btn.disabled = false; btn.textContent = '⚡ Login';
         }
       });
