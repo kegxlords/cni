@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Dashboard - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="card glow rise d1 pulse">
+      <div class="lbl">Available Balance</div>
+      <div class="amt cyan" id="balAmt" style="font-size:30px;">0 FCFA</div>
+      <div class="mut" style="margin-top:6px;">Total deposited: <span id="depAmt">0 FCFA</span></div>
+    </div>
+
+    <div class="card rise d2">
+      <div class="row">
+        <div class="grow">
+          <div class="lbl">Today's Earning</div>
+          <div class="amt green" id="todayAmt">+0 FCFA</div>
+          <div class="mut">Daily potential: <span id="potAmt">0 FCFA</span></div>
+        </div>
+        <div style="font-size:34px;">⚡</div>
+      </div>
+    </div>
+
+    <div class="qgrid rise d2">
+      <a href="/deposit"><span class="ic">💳</span>Deposit</a>
+      <a href="/invest"><span class="ic">📈</span>Invest</a>
+      <a href="/withdraw"><span class="ic">💸</span>Withdraw</a>
+      <a href="/team"><span class="ic">👥</span>Team</a>
+    </div>
+
+    <div class="sec rise d3">Active Plans</div>
+    <div id="plans"></div>
+
+    <div class="card rise d3">
+      <div class="row">
+        <div class="grow">
+          <div class="lbl">Your Referral Code</div>
+          <div class="name" id="refCode" style="color:var(--cni-cyan);">—</div>
+          <div class="mut">Earn 30% on every downline deposit</div>
+        </div>
+        <button class="btn sm cyan" onclick="CniAuth.copy(document.getElementById('refCode').textContent)">📋 Copy</button>
+      </div>
+    </div>
+  </div>
+  <div id="app-footer"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    document.addEventListener('DOMContentLoaded', async function () {
+      const session = await CniAuth.requireAuth();
+      if (!session) return;
+      const uid = session.user.id;
+      const [profile, wallet] = await Promise.all([CniAuth.getProfile(uid), CniAuth.getWallet(uid)]);
+      CniUI.header(session, profile);
+      CniUI.nav();
+
+      document.getElementById('balAmt').textContent = fmt(wallet?.balance);
+      document.getElementById('depAmt').textContent = fmt(wallet?.total_deposit);
+      document.getElementById('refCode').textContent = profile?.referral_code || '—';
+
+      const { data: plans } = await window.sb.from('user_products')
+        .select('*, products(name)').eq('user_id', uid).eq('status', 'active')
+        .order('created_at', { ascending: false });
+      const list = plans || [];
+      document.getElementById('potAmt').textContent = fmt(list.reduce((s, p) => s + Number(p.daily_income), 0));
+
+      const sod = new Date(); sod.setHours(0, 0, 0, 0);
+      const { data: today } = await window.sb.from('wallet_transactions')
+        .select('amount').eq('user_id', uid).eq('type', 'daily_income').gte('created_at', sod.toISOString());
+      document.getElementById('todayAmt').textContent = '+' + fmt((today || []).reduce((s, t) => s + Number(t.amount), 0));
+
+      document.getElementById('plans').innerHTML = list.length ? list.map(p => `
+        <div class="card">
+          <div class="row">
+            <div class="grow">
+              <div class="name">${p.products?.name || 'Plan'}</div>
+              <div class="mut">Day ${p.days_collected}/15 • ${fmt(p.daily_income)}/day</div>
+              <div class="bar" style="margin-top:8px;"><i style="width:${Math.min(100, (p.days_collected / 15) * 100)}%"></i></div>
+            </div>
+            <div class="right">
+              <div class="amt cyan">${fmt(p.amount)}</div>
+              <span class="chip active">ACTIVE</span>
+            </div>
+          </div>
+        </div>`).join('')
+        : '<div class="empty">No active plans yet.<br>Invest to start earning 32.5% daily for 15 days.<br><br><a class="btn sm cyan" href="/invest">📈 Browse Packages</a></div>';
+    });
+  </script>
+</body>
+</html>
