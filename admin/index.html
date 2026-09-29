@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Admin Overview - Calmtel</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="adm-wrap">
+    <div id="adm-nav"></div>
+    <h2 class="adm-title">Network Overview</h2>
+
+    <div class="adm-stats">
+      <div class="adm-stat"><b id="sUsers">0</b><span>Users</span></div>
+      <div class="adm-stat"><b id="sDep24">0</b><span>Deposits 24h</span></div>
+      <div class="adm-stat"><b id="sBanned">0</b><span>Banned</span></div>
+    </div>
+    <div class="adm-stats">
+      <div class="adm-stat"><b id="sPending">0</b><span>WD Pending</span></div>
+      <div class="adm-stat"><b id="sSent">0</b><span>At pcmedia</span></div>
+      <div class="adm-stat"><b id="sAppToday">0</b><span>Approved Today</span></div>
+    </div>
+
+    <div class="adm-title" style="font-size:15px;">Recent Withdrawals</div>
+    <div id="recent"></div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    document.addEventListener('DOMContentLoaded', async function () {
+      const session = await CniAuth.adminGuard();
+      if (!session) return;
+      const profile = await CniAuth.getProfile(session.user.id);
+      CniUI.header(session, profile);
+      CniUI.adminNav('overview');
+
+      const sod = new Date(); sod.setHours(0, 0, 0, 0);
+      const d24 = new Date(Date.now() - 24 * 3600 * 1000);
+      const sb = window.sb;
+
+      const [{ count: users }, { count: banned }, { count: pending }, { count: sent }, { count: appToday }, { data: deps }] = await Promise.all([
+        sb.from('users').select('id', { count: 'exact', head: true }),
+        sb.from('users').select('id', { count: 'exact', head: true }).eq('is_banned', true),
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved').gte('created_at', sod.toISOString()),
+        sb.from('payment_transactions').select('amount').eq('kind', 'deposit').eq('status', 'paid').gte('created_at', d24.toISOString())
+      ]);
+
+      document.getElementById('sUsers').textContent = users || 0;
+      document.getElementById('sBanned').textContent = banned || 0;
+      document.getElementById('sPending').textContent = pending || 0;
+      document.getElementById('sSent').textContent = sent || 0;
+      document.getElementById('sAppToday').textContent = appToday || 0;
+      document.getElementById('sDep24').textContent = (deps || []).reduce((s, t) => s + Number(t.amount), 0).toLocaleString();
+
+      const { data: recent } = await sb.from('withdrawal_requests')
+        .select('*, users(full_name)').order('created_at', { ascending: false }).limit(8);
+      document.getElementById('recent').innerHTML = (recent || []).length ? (recent || []).map(w => `
+        <div class="adm-card">
+          <div class="adm-row-top">
+            <div>
+              <div class="adm-name">${w.users?.full_name || 'User'}</div>
+              <div class="adm-sub">${CniAuth.timeAgo(w.created_at)} • ${w.recipient_mobile}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="adm-amt">${fmt(w.amount)}</div>
+              <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
+            </div>
+          </div>
+        </div>`).join('') : '<div class="adm-empty">No withdrawals yet.</div>';
+    });
+  </script>
+</body>
+</html>
