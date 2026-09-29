@@ -150,3 +150,11 @@ a { color: var(--cni-cyan); }
 .adm-empty { text-align: center; padding: 34px 18px; border: 2px dashed var(--cni-line); border-radius: 18px; color: var(--cni-mut); font-size: 13px; }
 .adm-input { width: 100%; padding: 13px 14px; border-radius: 12px; border: 1px solid var(--cni-line); background: rgba(2,11,31,.6); color: var(--cni-txt); font: 600 14px 'Inter'; outline: none; margin-bottom: 10px; }
 .adm-input:focus { border-color: var(--cni-cyan); }
+/* ---- STEP 3 ADDITIONS ---- */
+.bar { height: 6px; background: rgba(53,199,255,.15); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, #35C7FF, #0047FF); border-radius: 3px; }
+.qgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 12px 0; }
+.qgrid a { background: var(--cni-card); border: 1px solid var(--cni-line); border-radius: 16px; text-align: center; padding: 14px 4px; text-decoration: none; color: var(--cni-txt); font-size: 10px; font-weight: 800; }
+.qgrid a .ic { display: block; font-size: 20px; margin-bottom: 6px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.chips button { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--cni-line); background: rgba(53,199,255,.08); color: var(--cni-cyan); font: 800 12px 'Inter'; cursor: pointer; }
