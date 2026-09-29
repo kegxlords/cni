@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Create Account - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="hero rise d1" style="padding-bottom:10px;">
+      <div class="globe" style="font-size:44px;">🌐</div>
+      <h1 style="font-size:24px;">JOIN CALMTEL</h1>
+      <div class="mut">Fast • Secure • Reliable</div>
+    </div>
+    <div class="card glow rise d2">
+      <form id="regForm">
+        <label class="lbl">Full Name</label>
+        <input class="input" id="rName" placeholder="Your full name" required />
+        <label class="lbl">Email Address</label>
+        <input class="input" id="rEmail" type="email" placeholder="you@example.com" required />
+        <label class="lbl">Phone Number</label>
+        <input class="input" id="rPhone" placeholder="2376XXXXXXXX" required />
+        <label class="lbl">Password</label>
+        <input class="input" id="rPass" type="password" placeholder="Min 6 characters" minlength="6" required />
+        <label class="lbl">Referral Code (optional)</label>
+        <input class="input" id="rRef" placeholder="CNIXXXXX" />
+        <button class="btn cyan" id="rBtn" type="submit">🌐 Create Account</button>
+      </form>
+      <a class="btn ghost" style="margin-top:10px;" href="/">← Back to Login</a>
+    </div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', async function () {
+      const session = await CniAuth.getSession();
+      if (session) { location.href = '/dashboard'; return; }
+      CniUI.header(null);
+      const ref = new URLSearchParams(location.search).get('ref');
+      if (ref) document.getElementById('rRef').value = ref.toUpperCase();
+
+      document.getElementById('regForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const btn = document.getElementById('rBtn');
+        btn.disabled = true; btn.textContent = 'Creating…';
+        try {
+          await CniAuth.register(
+            document.getElementById('rName').value.trim(),
+            document.getElementById('rEmail').value.trim().toLowerCase(),
+            document.getElementById('rPhone').value.replace(/\s/g, ''),
+            document.getElementById('rPass').value,
+            document.getElementById('rRef').value.trim()
+          );
+          CniAuth.toast('Account created — please login');
+          setTimeout(() => location.href = '/', 1200);
+        } catch (err) {
+          CniAuth.toast(err.message, 'error');
+          btn.disabled = false; btn.textContent = '🌐 Create Account';
+        }
+      });
+    });
+  </script>
+</body>
+</html>
