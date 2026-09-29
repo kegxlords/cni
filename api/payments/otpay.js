@@ -179,7 +179,7 @@ async function adminDepositCredit(supabase, merchantOrderId) {
   if (!tx) return { status: 404, body: { error: 'Transaction not found' } };
   if (tx.status !== 'pending') return { status: 400, body: { error: `Already ${tx.status}` } };
   const pa = Number(tx.pay_amount || tx.amount);
-  await creditDeposit({ supabase, user_id: tx.user_id, amount: pa, provider_ref: tx.provider_order_id, description: `CNI deposit (admin force-credit)` });
+  await creditDeposit({ supabase, user_id: tx.user_id, amount: pa, provider_ref: tx.provider_order_id, description: 'CNI deposit (admin force-credit)' });
   await supabase.from('payment_transactions').update({ status: 'paid', pay_amount: pa, updated_at: new Date().toISOString() }).eq('id', tx.id);
   return { status: 200, body: { ok: true, message: 'Force-credited' } };
 }
@@ -219,6 +219,12 @@ module.exports = async function handler(req, res) {
     if (!data?.user) return res.status(401).json({ error: 'Unauthorized' });
     const { data: prof } = await supabase.from('users').select('is_banned').eq('id', data.user.id).single();
     if (prof?.is_banned) return res.status(403).json({ error: 'Account suspended — contact support' });
+
+    // 🛑 KILL-SWITCH: block new deposit orders when gateway disabled in Settings
+    if (action === 'deposit-create') {
+      const { data: st } = await supabase.from('platform_settings').select('otpay_enabled').eq('id', 1).single();
+      if (st && st.otpay_enabled === false) return res.status(403).json({ error: 'Deposits are temporarily disabled' });
+    }
 
     let result;
     if (action === 'deposit-create') result = await depositCreate(supabase, data.user.id, req.body);
