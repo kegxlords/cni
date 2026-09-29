@@ -91,6 +91,8 @@
           const d = await res.json();
           if (!res.ok || !d.ok) throw new Error(d.error || 'Request failed');
           CniAuth.toast('✅ Request queued for processing');
+          const w2 = await CniAuth.getWallet(SESSION.user.id);
+          document.getElementById('balAmt').textContent = fmt(w2?.balance);
           document.getElementById('wAmt').value = ''; summary();
           load();
         } catch (e) {
