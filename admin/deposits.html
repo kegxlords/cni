@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Admin Deposits - Calmtel</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="adm-wrap">
+    <div id="adm-nav"></div>
+    <h2 class="adm-title">Deposits</h2>
+
+    <div class="adm-stats">
+      <div class="adm-stat"><b id="dPending">0</b><span>Pending</span></div>
+      <div class="adm-stat"><b id="dPaid24">0</b><span>Paid 24h</span></div>
+      <div class="adm-stat"><b id="dVol24">0</b><span>Volume 24h</span></div>
+    </div>
+
+    <div class="adm-title" style="font-size:15px;">Pending Orders</div>
+    <div id="pendList"></div>
+    <div class="adm-title" style="font-size:15px;">Recent Settled</div>
+    <div id="settledList"></div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null;
+
+    async function depAct(action, id) {
+      const msgs = {
+        'admin-deposit-verify': 'Query gateway and credit if paid?',
+        'admin-deposit-credit': 'FORCE credit this deposit without gateway check?',
+        'admin-deposit-fail': 'Mark this deposit as FAILED?'
+      };
+      if (!confirm(msgs[action])) return;
+      const res = await fetch('/api/payments/otpay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+        body: JSON.stringify({ action, merchantOrderId: id })
+      });
+      const d = await res.json();
+      CniAuth.toast(d.message || d.error, d.ok ? 'success' : 'error');
+      load();
+    }
+
+    async function load() {
+      const sb = window.sb;
+      const d24 = new Date(Date.now() - 24 * 3600 * 1000);
+      const [{ data: pend }, { count: cp }, { data: paid24 }] = await Promise.all([
+        sb.from('payment_transactions').select('*, users(full_name, email)').eq('kind', 'deposit').eq('status', 'pending').order('created_at', { ascending: false }).limit(30),
+        sb.from('payment_transactions').select('id', { count: 'exact', head: true }).eq('kind', 'deposit').eq('status', 'pending'),
+        sb.from('payment_transactions').select('amount').eq('kind', 'deposit').eq('status', 'paid').gte('created_at', d24.toISOString())
+      ]);
+      document.getElementById('dPending').textContent = cp || 0;
+      document.getElementById('dPaid24').textContent = (paid24 || []).length;
+      document.getElementById('dVol24').textContent = ((paid24 || []).reduce((s, t) => s + Number(t.amount), 0) / 1000).toFixed(0) + 'k';
+
+      document.getElementById('pendList').innerHTML = (pend || []).length ? (pend || []).map(t => `
+        <div class="adm-card">
+          <div class="adm-row-top">
+            <div>
+              <div class="adm-name">${t.users?.full_name || 'User'}</div>
+              <div class="adm-sub">${t.users?.email || ''}<br>${t.merchant_order_id}<br>${CniAuth.timeAgo(t.created_at)} • ${t.phone || ''}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="adm-amt">${fmt(t.amount)}</div>
+              <span class="chip pending">PENDING</span>
+            </div>
+          </div>
+          <div class="adm-actions">
+            <button class="adm-btn ok" onclick="depAct('admin-deposit-verify','${t.merchant_order_id}')">🔄 Verify & Credit</button>
+            <button class="adm-btn warn" onclick="depAct('admin-deposit-credit','${t.merchant_order_id}')">💳 Force</button>
+            <button class="adm-btn no" onclick="depAct('admin-deposit-fail','${t.merchant_order_id}')">✕ Fail</button>
+          </div>
+        </div>`).join('') : '<div class="adm-empty">No pending deposits. 🎉</div>';
+
+      const { data: settled } = await sb.from('payment_transactions')
+        .select('*, users(full_name)').eq('kind', 'deposit').neq('status', 'pending')
+        .order('created_at', { ascending: false }).limit(10);
+      document.getElementById('settledList').innerHTML = (settled || []).length ? (settled || []).map(t => `
+        <div class="adm-card" style="padding:12px 14px;">
+          <div class="adm-row-top">
+            <div>
+              <div class="adm-name" style="font-size:13px;">${t.users?.full_name || 'User'}</div>
+              <div class="adm-sub">${CniAuth.timeAgo(t.created_at)}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="adm-amt" style="font-size:14px;">${fmt(t.amount)}</div>
+              <span class="chip ${t.status}">${t.status.toUpperCase()}</span>
+            </div>
+          </div>
+        </div>`).join('') : '<div class="adm-empty">Nothing settled yet.</div>';
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      SESSION = await CniAuth.adminGuard();
+      if (!SESSION) return;
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.adminNav('deposits');
+      load();
+    });
+  </script>
+</body>
+</html>
