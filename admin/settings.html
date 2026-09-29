@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Admin Settings - Calmtel</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="adm-wrap">
+    <div id="adm-nav"></div>
+    <h2 class="adm-title">Platform Settings</h2>
+
+    <div class="adm-card">
+      <label class="lbl">Withdrawal Fee (%)</label>
+      <input class="adm-input" id="setFee" type="number" min="0" max="90" />
+      <label class="lbl">Referral Bonus (%)</label>
+      <input class="adm-input" id="setBonus" type="number" min="0" max="90" />
+      <label class="lbl">Minimum Withdrawal (FCFA)</label>
+      <input class="adm-input" id="setMin" type="number" min="0" />
+      <label class="lbl">Telegram Group URL</label>
+      <input class="adm-input" id="setTgGroup" placeholder="https://t.me/..." />
+      <label class="lbl">Telegram Support URL</label>
+      <input class="adm-input" id="setTgSupport" placeholder="https://t.me/..." />
+      <label class="lbl">WhatsApp Group URL (optional)</label>
+      <input class="adm-input" id="setWa" placeholder="https://chat.whatsapp.com/..." />
+      <button class="adm-go" onclick="savePlatform()">💾 Save Platform</button>
+    </div>
+
+    <div class="adm-title" style="font-size:15px;">🔗 pcmedia Bridge</div>
+    <div class="adm-card">
+      <label class="lbl">Bridge URL (withdrawals are POSTed here)</label>
+      <input class="adm-input" id="setBridge" placeholder="https://pcmedia.online/bridge/withdrawal" />
+      <label class="lbl">Bridge Secret (HMAC signature, optional)</label>
+      <input class="adm-input" id="setSecret" placeholder="long random string" />
+      <button class="adm-btn" style="width:100%;margin-bottom:10px;" onclick="genSecret()">🎲 Generate Secret</button>
+      <button class="adm-go" onclick="saveBridge()">💾 Save Bridge</button>
+      <button class="adm-btn" style="width:100%;margin-top:8px;" onclick="testBridge()">🧪 Test Bridge (dummy payload)</button>
+      <label class="lbl" style="margin-top:14px;">Inbound Callback URL (give to pcmedia)</label>
+      <input class="adm-input" id="cbIn" readonly style="opacity:.7;" />
+      <button class="adm-btn" style="width:100%;" onclick="CniAuth.copy(document.getElementById('cbIn').value, 'Callback URL copied')">📋 Copy Callback URL</button>
+    </div>
+
+    <div class="adm-title" style="font-size:15px;">⚡ OTPay Gateway</div>
+    <div class="adm-card">
+      <label class="lbl">Gateway Enabled</label>
+      <select class="adm-input" id="setOtpayEnabled">
+        <option value="true">✅ Enabled</option>
+        <option value="false">⛔ Disabled (kill-switch)</option>
+      </select>
+      <label class="lbl">Default Country</label>
+      <select class="adm-input" id="setCountry">
+        <option value="CM">🇨🇲 Cameroon (XAF)</option>
+        <option value="CI">🇨🇮 Côte d'Ivoire (XOF)</option>
+        <option value="SN">🇸🇳 Senegal (XOF)</option>
+      </select>
+      <button class="adm-go" onclick="saveGateway()">💾 Save Gateway</button>
+    </div>
+
+    <div class="adm-title" style="font-size:15px;">🛠 Tools</div>
+    <button class="adm-go" onclick="runIncome()">🌙 Run Daily Income Now</button>
+    <input class="adm-input" id="newAdminEmail" placeholder="Email to grant admin..." style="margin-top:10px;" />
+    <button class="adm-go" onclick="makeAdmin()">👑 Grant Admin by Email</button>
+
+    <div class="adm-card" style="margin-top:14px;">
+      <div class="adm-name">ℹ️ Notes</div>
+      <div class="adm-sub">
+        • Daily 32.5% income auto-runs nightly 23:00 UTC (Vercel cron).<br>
+        • Withdrawals: Pending → 🔗 Sent to pcmedia → auto-approved on their "paid" callback, or ✓ Approve manually.<br>
+        • Failed pcmedia payouts auto-refund the user (single-refund guaranteed).<br>
+        • Fee/bonus/min changes apply instantly to new requests.
+      </div>
+    </div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    let SESSION = null;
+
+    function genSecret() {
+      const arr = new Uint8Array(24);
+      crypto.getRandomValues(arr);
+      document.getElementById('setSecret').value = Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+      CniAuth.toast('Secret generated — remember to Save');
+    }
+
+    async function savePlatform() {
+      const payload = {
+        withdrawal_fee_percent: Number(document.getElementById('setFee').value),
+        referral_bonus_percent: Number(document.getElementById('setBonus').value),
+        min_withdrawal: Number(document.getElementById('setMin').value),
+        telegram_group_url: document.getElementById('setTgGroup').value.trim(),
+        telegram_support_url: document.getElementById('setTgSupport').value.trim(),
+        whatsapp_group_url: document.getElementById('setWa').value.trim()
+      };
+      const { error } = await window.sb.from('platform_settings').update(payload).eq('id', 1);
+      CniAuth.toast(error ? error.message : 'Platform settings saved');
+    }
+    async function saveBridge() {
+      const payload = {
+        pcmedia_bridge_url: document.getElementById('setBridge').value.trim(),
+        pcmedia_bridge_secret: document.getElementById('setSecret').value.trim()
+      };
+      const { error } = await window.sb.from('platform_settings').update(payload).eq('id', 1);
+      CniAuth.toast(error ? error.message : 'Bridge saved');
+    }
+    async function testBridge() {
+      const res = await fetch('/api/withdraw/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+        body: JSON.stringify({ action: 'test' })
+      });
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) return CniAuth.toast('Bad response from bridge', 'error');
+      const d = await res.json();
+      CniAuth.toast(d.ok ? `Bridge replied HTTP ${d.status}` : d.error, d.ok ? 'success' : 'error');
+    }
+    async function saveGateway() {
+      const payload = {
+        otpay_enabled: document.getElementById('setOtpayEnabled').value === 'true',
+        otpay_country: document.getElementById('setCountry').value
+      };
+      const { error } = await window.sb.from('platform_settings').update(payload).eq('id', 1);
+      CniAuth.toast(error ? error.message : 'Gateway settings saved');
+    }
+    async function runIncome() {
+      if (!confirm('Credit daily 32.5% income to all active plans now?')) return;
+      const res = await fetch('/api/admin/daily-income', { headers: { 'Authorization': 'Bearer ' + SESSION.access_token } });
+      const d = await res.json();
+      CniAuth.toast(d.ok ? `Credited ${d.credited} plans, ${d.completed} completed` : d.error, d.ok ? 'success' : 'error');
+    }
+    async function makeAdmin() {
+      const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
+      if (!email) return CniAuth.toast('Enter an email', 'error');
+      if (!confirm('Grant admin to ' + email + '?')) return;
+      const { error } = await window.sb.from('users').update({ is_admin: true }).eq('email', email);
+      CniAuth.toast(error ? error.message : 'Admin granted (if email exists)');
+      document.getElementById('newAdminEmail').value = '';
+    }
+
+    async function loadSettings() {
+      const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
+      if (!s) return;
+      document.getElementById('setFee').value = s.withdrawal_fee_percent;
+      document.getElementById('setBonus').value = s.referral_bonus_percent;
+      document.getElementById('setMin').value = s.min_withdrawal;
+      document.getElementById('setTgGroup').value = s.telegram_group_url || '';
+      document.getElementById('setTgSupport').value = s.telegram_support_url || '';
+      document.getElementById('setWa').value = s.whatsapp_group_url || '';
+      document.getElementById('setBridge').value = s.pcmedia_bridge_url || '';
+      document.getElementById('setSecret').value = s.pcmedia_bridge_secret || '';
+      document.getElementById('setOtpayEnabled').value = String(s.otpay_enabled !== false);
+      if (s.otpay_country) document.getElementById('setCountry').value = s.otpay_country;
+      document.getElementById('cbIn').value = location.origin + '/api/payments/otpay-callback';
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      SESSION = await CniAuth.adminGuard();
+      if (!SESSION) return;
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.adminNav('settings');
+      loadSettings();
+    });
+  </script>
+</body>
+</html>
