@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Profile - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="card glow rise d1" id="pCard"></div>
+
+    <div class="sec rise d2">Wallet History</div>
+    <div id="pLedger"></div>
+
+    <div class="sec rise d3">Support</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <a class="btn sm ghost" id="pTg" href="#">💬 Telegram</a>
+      <a class="btn sm ghost" id="pWa" href="#"> WhatsApp</a>
+    </div>
+    <button class="btn danger" onclick="CniAuth.logout()">⏻ Logout</button>
+    <div style="height:20px;"></div>
+  </div>
+  <div id="app-footer"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    document.addEventListener('DOMContentLoaded', async function () {
+      const session = await CniAuth.requireAuth();
+      if (!session) return;
+      const uid = session.user.id;
+      const [profile, wallet] = await Promise.all([CniAuth.getProfile(uid), CniAuth.getWallet(uid)]);
+      CniUI.header(session, profile);
+      CniUI.nav();
+
+      document.getElementById('pCard').innerHTML = `
+        <div class="row">
+          <div class="av" style="width:52px;height:52px;font-size:20px;">${(profile?.full_name || '?').charAt(0).toUpperCase()}</div>
+          <div class="grow">
+            <div class="name" style="font-size:16px;">${profile?.full_name || 'Member'}</div>
+            <div class="mut">${profile?.email || ''}<br>${profile?.phone || 'No phone'}</div>
+          </div>
+          <span class="chip vip">VIP ${profile?.vip_level || 0}</span>
+        </div>
+        <div class="stats" style="margin:14px 0 0;">
+          <div class="stat"><b class="cyan">${fmt(wallet?.balance).replace(' FCFA','')}</b><span>Balance</span></div>
+          <div class="stat"><b>${fmt(wallet?.total_deposit).replace(' FCFA','')}</b><span>Deposited</span></div>
+          <div class="stat"><b class="green">${fmt(wallet?.total_profit).replace(' FCFA','')}</b><span>Profit</span></div>
+        </div>`;
+
+      const { data: tx } = await window.sb.from('wallet_transactions')
+        .select('*').eq('user_id', uid).order('created_at', { ascending: false }).limit(30);
+      document.getElementById('pLedger').innerHTML = (tx || []).length ? (tx || []).map(t => `
+        <div class="card" style="padding:12px 14px;">
+          <div class="row">
+            <div class="grow">
+              <div class="name" style="font-size:12.5px;">${t.description || t.type}</div>
+              <div class="mut">${CniAuth.timeAgo(t.created_at)}</div>
+            </div>
+            <div class="right">
+              <div class="amt ${Number(t.amount) >= 0 ? 'green' : 'red'}" style="font-size:13px;">${Number(t.amount) >= 0 ? '+' : ''}${fmt(t.amount)}</div>
+              <span class="chip ${t.type === 'deposit' ? 'paid' : t.type === 'withdrawal' ? 'sent' : 'completed'}">${t.type.replace('_', ' ').toUpperCase()}</span>
+            </div>
+          </div>
+        </div>`).join('') : '<div class="empty">No transactions yet.</div>';
+
+      const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
+      if (s?.telegram_support_url) document.getElementById('pTg').href = s.telegram_support_url;
+      if (s?.whatsapp_group_url) document.getElementById('pWa').href = s.whatsapp_group_url;
+      else document.getElementById('pWa').style.display = 'none';
+    });
+  </script>
+</body>
+</html>
