@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Withdraw - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="card glow rise d1">
+      <div class="row">
+        <div class="grow"><div class="lbl">Available Balance</div><div class="amt cyan" id="balAmt">0 FCFA</div></div>
+        <span class="chip sent">8% FEE</span>
+      </div>
+    </div>
+
+    <div class="card rise d2">
+      <div class="sec" style="margin-top:0;">Request Withdrawal</div>
+      <label class="lbl">Amount (FCFA) — <span id="wMin">min 1,500</span></label>
+      <input class="input" id="wAmt" type="number" placeholder="Enter amount" oninput="summary()" />
+      <div class="card" style="background:rgba(53,199,255,.06);margin-bottom:10px;">
+        <div class="row"><div class="grow mut">Charge (8%)</div><div class="amt gold" id="wFee" style="font-size:13px;">0 FCFA</div></div>
+        <div class="row" style="margin-top:6px;"><div class="grow mut">You receive</div><div class="amt green" id="wNet" style="font-size:15px;">0 FCFA</div></div>
+      </div>
+      <label class="lbl">Recipient Name</label>
+      <input class="input" id="wName" placeholder="Full name" />
+      <label class="lbl">Recipient MoMo Number</label>
+      <input class="input" id="wMobile" placeholder="2376XXXXXXXX" />
+      <label class="lbl">Network</label>
+      <select class="input" id="wOperator">
+        <option value="mtn">MTN Mobile Money</option>
+        <option value="orange">Orange Money</option>
+      </select>
+      <button class="btn primary" id="wBtn">💸 Request Withdrawal</button>
+      <div class="mut" style="margin-top:8px;text-align:center;">Unlimited requests • processed by our payment partner</div>
+    </div>
+
+    <div class="sec rise d3">My Withdrawals</div>
+    <div id="wList"></div>
+  </div>
+  <div id="app-footer"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null, FEE = 8, MIN = 1500;
+    function summary() {
+      const a = Number(document.getElementById('wAmt').value || 0);
+      const f = Math.round(a * FEE / 100);
+      document.getElementById('wFee').textContent = fmt(f);
+      document.getElementById('wNet').textContent = fmt(a - f);
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      SESSION = await CniAuth.requireAuth();
+      if (!SESSION) return;
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.nav();
+      const wallet = await CniAuth.getWallet(SESSION.user.id);
+      document.getElementById('balAmt').textContent = fmt(wallet?.balance);
+      const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
+      if (s) { FEE = Number(s.withdrawal_fee_percent); MIN = Number(s.min_withdrawal); }
+      document.getElementById('wMin').textContent = 'min ' + MIN.toLocaleString();
+      if (profile?.full_name) document.getElementById('wName').value = profile.full_name;
+      if (profile?.phone) document.getElementById('wMobile').value = profile.phone;
+      load();
+
+      document.getElementById('wBtn').addEventListener('click', async () => {
+        const amt = Number(document.getElementById('wAmt').value);
+        if (!amt || amt < MIN) return CniAuth.toast('Minimum withdrawal is ' + MIN.toLocaleString() + ' FCFA', 'error');
+        const name = document.getElementById('wName').value.trim();
+        const mobile = document.getElementById('wMobile').value.replace(/\s/g, '');
+        if (name.length < 3) return CniAuth.toast('Enter recipient name', 'error');
+        if (!/^237\d{9}$/.test(mobile)) return CniAuth.toast('Enter a valid 237... number', 'error');
+        const btn = document.getElementById('wBtn');
+        btn.disabled = true; btn.textContent = 'Submitting…';
+        try {
+          const res = await fetch('/api/withdraw/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+            body: JSON.stringify({ amount: amt, recipient_name: name, recipient_mobile: mobile, country_code: 'CM', operator: document.getElementById('wOperator').value })
+          });
+          const d = await res.json();
+          if (!res.ok || !d.ok) throw new Error(d.error || 'Request failed');
+          CniAuth.toast('✅ Request queued for processing');
+          document.getElementById('wAmt').value = ''; summary();
+          load();
+        } catch (e) {
+          CniAuth.toast(e.message, 'error');
+        } finally {
+          btn.disabled = false; btn.textContent = '💸 Request Withdrawal';
+        }
+      });
+    });
+
+    async function load() {
+      const { data: wds } = await window.sb.from('withdrawal_requests')
+        .select('*').eq('user_id', SESSION.user.id).order('created_at', { ascending: false }).limit(15);
+      document.getElementById('wList').innerHTML = (wds || []).length ? (wds || []).map(w => `
+        <div class="card">
+          <div class="row">
+            <div class="grow">
+              <div class="name">${fmt(w.amount)}</div>
+              <div class="mut">${CniAuth.timeAgo(w.created_at)} • receive ${fmt(w.net_amount)} • ${w.recipient_mobile}</div>
+            </div>
+            <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
+          </div>
+        </div>`).join('') : '<div class="empty">No withdrawals yet.</div>';
+    }
+  </script>
+</body>
+</html>
