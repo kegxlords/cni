@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>My Team - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="stats rise d1">
+      <div class="stat"><b id="tMembers">0</b><span>Members</span></div>
+      <div class="stat"><b class="cyan" id="tActive">0</b><span>Active</span></div>
+      <div class="stat"><b class="gold" id="tEarn">0</b><span>Earned</span></div>
+    </div>
+
+    <div class="card glow rise d2">
+      <div class="row">
+        <div class="grow">
+          <div class="lbl">Invite & Earn 30%</div>
+          <div class="name" id="tCode" style="color:var(--cni-cyan);">—</div>
+        </div>
+        <button class="btn sm cyan" onclick="CniAuth.copy(document.getElementById('tCode').textContent)">📋</button>
+        <button class="btn sm ghost" onclick="share()">💬</button>
+      </div>
+    </div>
+
+    <div class="sec rise d3">My Downline</div>
+    <div id="tList"></div>
+  </div>
+  <div id="app-footer"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let CODE = '';
+    function share() {
+      const txt = encodeURIComponent(`🌐 Join me on CALMTEL NETWORK INTERNATIONAL!\nInvest & earn 32.5% daily for 15 days.\nUse my code: ${CODE}\n${location.origin}/register?ref=${CODE}`);
+      window.open('https://wa.me/?text=' + txt, '_blank');
+    }
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      const session = await CniAuth.requireAuth();
+      if (!session) return;
+      const profile = await CniAuth.getProfile(session.user.id);
+      CniUI.header(session, profile);
+      CniUI.nav();
+
+      const { data: team, error } = await window.sb.rpc('get_team', { p_uid: session.user.id });
+      if (error || !team || team.error) {
+        document.getElementById('tList').innerHTML = '<div class="empty">Failed to load team.</div>';
+        return;
+      }
+      CODE = team.referral_code || '';
+      document.getElementById('tCode').textContent = CODE;
+      document.getElementById('tMembers').textContent = team.total_downlines;
+      document.getElementById('tActive').textContent = team.active_downlines;
+      document.getElementById('tEarn').textContent = Number(team.referral_earnings || 0).toLocaleString();
+
+      document.getElementById('tList').innerHTML = (team.members || []).length ? team.members.map(m => `
+        <div class="card">
+          <div class="row">
+            <div class="av">${(m.full_name || '?').charAt(0).toUpperCase()}</div>
+            <div class="grow">
+              <div class="name">${m.full_name}</div>
+              <div class="mut">Joined ${new Date(m.created_at).toLocaleDateString()} • Dep ${fmt(m.total_deposit)} • Inv ${fmt(m.invested)}</div>
+            </div>
+            <div class="right">
+              <div class="amt gold" style="font-size:13px;">+${fmt(m.commission)}</div>
+              <span class="chip ${m.active_plans > 0 ? 'active' : 'completed'}">${m.active_plans > 0 ? 'ACTIVE' : 'IDLE'}</span>
+            </div>
+          </div>
+        </div>`).join('')
+        : '<div class="empty">No team members yet.<br>Share your code to earn 30% on every deposit!</div>';
+    });
+  </script>
+</body>
+</html>
