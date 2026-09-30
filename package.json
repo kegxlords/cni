@@ -1,0 +1,9 @@
+{
+  "name": "calmtel-network-international",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CALMTEL NETWORK INTERNATIONAL platform",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4"
+  }
+}
