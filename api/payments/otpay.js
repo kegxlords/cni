@@ -119,6 +119,7 @@ async function depositCreate(supabase, uid, b) {
     return { status: 502, body: { ok: false, error: e.timeout ? 'Gateway did not respond in 15s — try again' : 'Network error reaching gateway' } };
   }
   if (r.status !== 200 || !r.data || r.data.code !== 0) {
+    log('cni.deposit-create', 'gateway rejected', { httpStatus: r.status, body: r.data });
     return { status: 502, body: { error: (r.data?.error || r.data?.msg || 'Gateway error') + (r.data?.code !== undefined ? ' [code ' + r.data.code + ']' : '') } };
   }
   await supabase.from('payment_transactions').insert({
