@@ -7,31 +7,60 @@
   <title>Transaction History - Calmtel Network International</title>
   <link rel="stylesheet" href="/assets/css/cni.css" />
   <style>
-    .chips button.on { background: var(--cni-cyan); color: #04263B; border-color: transparent; box-shadow: 0 0 14px rgba(53,199,255,.5); }
+    /* Filter Chip Active Style */
+    .filter-chip.on { 
+      background: var(--cni-cyan); 
+      color: #04263B; 
+      border-color: transparent; 
+      box-shadow: 0 0 14px rgba(53,199,255,.5); 
+    }
+    .filter-chip {
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--cni-line);
+      background: rgba(53,199,255,.08);
+      color: var(--cni-cyan);
+      font: 800 12px 'Inter';
+      cursor: pointer;
+      transition: all .2s ease;
+    }
   </style>
 </head>
 <body>
   <div id="app-header"></div>
+  
   <div class="wrap">
-    <div class="card glow rise d1">
-      <div class="row">
-        <div class="grow"><div class="lbl">Total In</div><div class="amt green" id="hIn">0 FCFA</div></div>
-        <div class="right"><div class="lbl">Total Out</div><div class="amt red" id="hOut">0 FCFA</div></div>
+    <!-- Loading State -->
+    <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
+      📜 Loading history...
+    </div>
+
+    <!-- Main Content -->
+    <div id="mainContent" style="display:none;">
+      
+      <!-- Summary Cards -->
+      <div class="stats rise d1">
+        <div class="stat"><b class="green" id="sumIn">0</b><span>Total In</span></div>
+        <div class="stat"><b class="red" id="sumOut">0</b><span>Total Out</span></div>
+        <div class="stat"><b class="cyan" id="countTx">0</b><span>Transactions</span></div>
       </div>
-    </div>
 
-    <div class="chips rise d2" id="filters">
-      <button class="on" data-f="all">All</button>
-      <button data-f="deposit">Deposits</button>
-      <button data-f="investment">Investments</button>
-      <button data-f="income">Income</button>
-      <button data-f="referral">Referrals</button>
-      <button data-f="withdrawal">Withdrawals</button>
-      <button data-f="refund">Refunds</button>
-    </div>
+      <!-- Filter Chips -->
+      <div class="chips rise d2" id="filters">
+        <button class="filter-chip on" data-f="all">All</button>
+        <button class="filter-chip" data-f="deposit">Deposits</button>
+        <button class="filter-chip" data-f="investment">Investments</button>
+        <button class="filter-chip" data-f="income">Daily Income</button>
+        <button class="filter-chip" data-f="referral">Referrals</button>
+        <button class="filter-chip" data-f="withdrawal">Withdrawals</button>
+        <button class="filter-chip" data-f="refund">Refunds</button>
+      </div>
 
-    <div id="hList" class="rise d3"></div>
+      <!-- Transaction List -->
+      <div id="txList" class="rise d3"></div>
+    </div>
   </div>
+  
   <div id="app-footer"></div>
   <div id="toast"></div>
 
@@ -41,59 +70,139 @@
   <script src="/assets/js/components.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
-    let SESSION = null, FILTER = 'all';
+    let SESSION = null;
+    let UID = null;
+    let CURRENT_FILTER = 'all';
+
+    // Map filter keys to actual DB types
     const TYPE_MAP = {
-      deposit: ['deposit'], investment: ['investment'], income: ['daily_income'],
-      referral: ['referral_bonus'], withdrawal: ['withdrawal'], refund: ['withdrawal_refund']
+      deposit: ['deposit'],
+      investment: ['investment'],
+      income: ['daily_income'],
+      referral: ['referral_bonus'],
+      withdrawal: ['withdrawal'],
+      refund: ['withdrawal_refund']
     };
-    const CHIP = {
-      deposit: 'paid', daily_income: 'active', referral_bonus: 'active',
-      withdrawal_refund: 'paid', withdrawal: 'pending', investment: 'sent', admin_adjust: 'completed'
-    };
+
+    // Determine chip class based on type
+    function getChipClass(type) {
+      if (['deposit', 'daily_income', 'referral_bonus', 'withdrawal_refund'].includes(type)) return 'paid';
+      if (['investment', 'withdrawal'].includes(type)) return 'sent';
+      return 'completed';
+    }
 
     document.addEventListener('DOMContentLoaded', async function () {
+      // 1. GET SESSION
       SESSION = await CniAuth.requireAuth();
       if (!SESSION) return;
-      const profile = await CniAuth.getProfile(SESSION.user.id);
-      CniUI.header(SESSION, profile);
-      CniUI.nav();
+      
+      UID = SESSION.user.id;
+      console.log('[HISTORY] Session loaded for:', UID);
 
-      const { data: all } = await window.sb.from('wallet_transactions').select('amount').eq('user_id', SESSION.user.id);
-      const rows = all || [];
-      document.getElementById('hIn').textContent = fmt(rows.filter(t => Number(t.amount) >= 0).reduce((s, t) => s + Number(t.amount), 0));
-      document.getElementById('hOut').textContent = fmt(Math.abs(rows.filter(t => Number(t.amount) < 0).reduce((s, t) => s + Number(t.amount), 0)));
+      try {
+        // 2. FETCH PROFILE FOR HEADER
+        const { data: profile } = await window.sb.from('users').select('*').eq('id', UID).single();
+        
+        // Render Header & Nav immediately
+        CniUI.header(SESSION, profile);
+        CniUI.nav();
 
-      document.getElementById('filters').addEventListener('click', e => {
-        const b = e.target.closest('button'); if (!b) return;
-        const on = document.querySelector('#filters .on'); if (on) on.classList.remove('on');
-        b.classList.add('on');
-        FILTER = b.dataset.f;
-        load();
-      });
-      load();
+        // 3. LOAD INITIAL DATA (ALL TYPES)
+        await loadTransactions('all');
+
+        // Show Content
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+
+        // 4. BIND FILTER CLICKS
+        document.getElementById('filters').addEventListener('click', e => {
+          const btn = e.target.closest('.filter-chip');
+          if (!btn) return;
+          
+          // Update active state
+          document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('on'));
+          btn.classList.add('on');
+          
+          // Reload with new filter
+          CURRENT_FILTER = btn.dataset.f;
+          loadTransactions(CURRENT_FILTER);
+        });
+
+      } catch (err) {
+        console.error('[HISTORY] Init Error:', err);
+        document.getElementById('loadingState').innerHTML = 
+          `<div style="color:var(--cni-red);">❌ Failed to load history.<br>${err.message}</div>`;
+      }
     });
 
-    async function load() {
-      let q = window.sb.from('wallet_transactions').select('*').eq('user_id', SESSION.user.id).order('created_at', { ascending: false }).limit(200);
-      if (FILTER !== 'all') q = q.in('type', TYPE_MAP[FILTER]);
-      const { data: tx } = await q;
-      const list = tx || [];
-      document.getElementById('hList').innerHTML = list.length ? list.map(t => {
-        const a = Number(t.amount);
-        return `
-        <div class="card" style="padding:12px 14px;">
-          <div class="row">
-            <div class="grow">
-              <div class="name" style="font-size:12.5px;">${t.description || t.type}</div>
-              <div class="mut">${new Date(t.created_at).toLocaleString()} • bal ${fmt(t.balance_after)}</div>
+    async function loadTransactions(filterKey) {
+      const container = document.getElementById('txList');
+      container.innerHTML = '<div class="empty">Loading...</div>';
+
+      try {
+        let query = window.sb.from('wallet_transactions')
+          .select('*')
+          .eq('user_id', UID)
+          .order('created_at', { ascending: false })
+          .limit(200); // Fetch enough for filtering client-side if needed, but we filter server-side
+
+        if (filterKey !== 'all') {
+          const types = TYPE_MAP[filterKey];
+          if (types && types.length > 0) {
+            query = query.in('type', types);
+          }
+        }
+
+        const { data: txs, error } = await query;
+
+        if (error) throw error;
+
+        const list = txs || [];
+        
+        // Calculate Summaries (Only from current filtered view)
+        let sumIn = 0, sumOut = 0;
+        list.forEach(t => {
+          const amt = Number(t.amount);
+          if (amt >= 0) sumIn += amt;
+          else sumOut += Math.abs(amt);
+        });
+
+        document.getElementById('sumIn').textContent = fmt(sumIn).replace(' FCFA','');
+        document.getElementById('sumOut').textContent = fmt(sumOut).replace(' FCFA','');
+        document.getElementById('countTx').textContent = list.length;
+
+        if (list.length === 0) {
+          container.innerHTML = '<div class="empty">No transactions found for this category.</div>';
+          return;
+        }
+
+        container.innerHTML = list.map(t => {
+          const a = Number(t.amount);
+          const dateStr = new Date(t.created_at).toLocaleString();
+          const chipCls = getChipClass(t.type);
+          const typeLabel = t.type.replace('_', ' ').toUpperCase();
+          
+          return `
+          <div class="card" style="padding:12px 14px;margin-bottom:8px;">
+            <div class="row">
+              <div class="grow">
+                <div class="name" style="font-size:13px;font-weight:700;">${t.description || typeLabel}</div>
+                <div class="mut" style="font-size:10px;margin-top:2px;">${dateStr} • Bal: ${fmt(t.balance_after)}</div>
+              </div>
+              <div class="right" style="min-width:80px;">
+                <div class="amt ${a >= 0 ? 'green' : 'red'}" style="font-size:14px;font-weight:900;">
+                  ${a >= 0 ? '+' : ''}${fmt(a)}
+                </div>
+                <span class="chip ${chipCls}" style="font-size:9px;margin-top:4px;display:inline-block;">${typeLabel}</span>
+              </div>
             </div>
-            <div class="right">
-              <div class="amt ${a >= 0 ? 'green' : 'red'}" style="font-size:13px;">${a >= 0 ? '+' : ''}${fmt(a)}</div>
-              <span class="chip ${CHIP[t.type] || 'completed'}">${t.type.replace(/_/g, ' ').toUpperCase()}</span>
-            </div>
-          </div>
-        </div>`;
-      }).join('') : '<div class="empty">No transactions in this category yet.</div>';
+          </div>`;
+        }).join('');
+
+      } catch (e) {
+        console.error('[HISTORY] Load Error:', e);
+        container.innerHTML = `<div class="empty" style="color:var(--cni-red);">Error loading history: ${e.message}</div>`;
+      }
     }
   </script>
 </body>
