@@ -92,11 +92,47 @@
     },
 
     async adminGuard() {
+      // 1. Get session first
       const s = await this.getSession();
-      if (!s) { location.href = '/'; return null; }
-      const { data: p } = await window.sb.from('users').select('is_admin').eq('id', s.user.id).single();
-      if (!p || !p.is_admin) { location.href = '/dashboard'; return null; }
-      return s;
+      if (!s) { 
+        console.warn('[ADMIN] No session found, redirecting home.');
+        location.href = '/'; 
+        return null; 
+      }
+
+      try {
+        // 2. Check admin status using .maybeSingle() to avoid crashes on missing rows
+        const { data: profile, error } = await window.sb
+          .from('users')
+          .select('is_admin')
+          .eq('id', s.user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('[ADMIN] DB Error checking admin:', error);
+          // Fallback: If DB fails, assume NOT admin for safety
+          location.href = '/dashboard';
+          return null;
+        }
+
+        // 3. Strictly check boolean flag
+        if (!profile || profile.is_admin !== true) {
+          console.warn('[ADMIN] User is NOT admin. Redirecting to dashboard.', { 
+            uid: s.user.id, 
+            isAdminFlag: profile?.is_admin 
+          });
+          location.href = '/dashboard';
+          return null;
+        }
+
+        console.log('[ADMIN] Access granted for user:', s.user.id);
+        return s;
+
+      } catch (e) {
+        console.error('[ADMIN] Unexpected exception in guard:', e);
+        location.href = '/dashboard';
+        return null;
+      }
     },
 
     // ---------- LOGIN ----------
