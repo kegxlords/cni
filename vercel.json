@@ -1,3 +1,23 @@
 {
-  "crons": [{ "path": "/api/admin/daily-income", "schedule": "0 23 * * *" }]
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/dashboard", "destination": "/dashboard.html" },
+    { "source": "/invest", "destination": "/invest.html" },
+    { "source": "/deposit", "destination": "/deposit.html" },
+    { "source": "/withdraw", "destination": "/withdraw.html" },
+    { "source": "/team", "destination": "/team.html" },
+    { "source": "/profile", "destination": "/profile.html" },
+    { "source": "/history", "destination": "/history.html" },
+    { "source": "/register", "destination": "/register.html" },
+    { "source": "/hi", "destination": "/hi.html" },
+    { "source": "/admin", "destination": "/admin/index.html" },
+    { "source": "/admin/withdrawals", "destination": "/admin/withdrawals.html" },
+    { "source": "/admin/deposits", "destination": "/admin/deposits.html" },
+    { "source": "/admin/users", "destination": "/admin/users.html" },
+    { "source": "/admin/settings", "destination": "/admin/settings.html" }
+  ],
+  "crons": [
+    { "path": "/api/admin/daily-income", "schedule": "0 23 * * *" }
+  ]
 }
