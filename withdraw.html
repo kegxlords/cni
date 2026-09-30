@@ -9,38 +9,64 @@
 </head>
 <body>
   <div id="app-header"></div>
+  
   <div class="wrap">
-    <div class="card glow rise d1">
-      <div class="row">
-        <div class="grow"><div class="lbl">Available Balance</div><div class="amt cyan" id="balAmt">0 FCFA</div></div>
-        <span class="chip sent">8% FEE</span>
-      </div>
+    <!-- Loading State -->
+    <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
+      💸 Loading withdrawal options...
     </div>
 
-    <div class="card rise d2">
-      <div class="sec" style="margin-top:0;">Request Withdrawal</div>
-      <label class="lbl">Amount (FCFA) — <span id="wMin">min 1,500</span></label>
-      <input class="input" id="wAmt" type="number" placeholder="Enter amount" oninput="summary()" />
-      <div class="card" style="background:rgba(53,199,255,.06);margin-bottom:10px;">
-        <div class="row"><div class="grow mut">Charge (8%)</div><div class="amt gold" id="wFee" style="font-size:13px;">0 FCFA</div></div>
-        <div class="row" style="margin-top:6px;"><div class="grow mut">You receive</div><div class="amt green" id="wNet" style="font-size:15px;">0 FCFA</div></div>
+    <!-- Main Content -->
+    <div id="mainContent" style="display:none;">
+      
+      <!-- Balance Header Card -->
+      <div class="card glow rise d1">
+        <div class="row">
+          <div class="grow"><div class="lbl">Available Balance</div><div class="amt cyan" id="balAmt">0 FCFA</div></div>
+          <span class="chip sent" id="feeChip">8% FEE</span>
+        </div>
       </div>
-      <label class="lbl">Recipient Name</label>
-      <input class="input" id="wName" placeholder="Full name" />
-      <label class="lbl">Recipient MoMo Number</label>
-      <input class="input" id="wMobile" placeholder="2376XXXXXXXX" />
-      <label class="lbl">Network</label>
-      <select class="input" id="wOperator">
-        <option value="mtn">MTN Mobile Money</option>
-        <option value="orange">Orange Money</option>
-      </select>
-      <button class="btn primary" id="wBtn">💸 Request Withdrawal</button>
-      <div class="mut" style="margin-top:8px;text-align:center;">Unlimited requests • processed by our payment partner</div>
-    </div>
 
-    <div class="sec rise d3">My Withdrawals</div>
-    <div id="wList"></div>
+      <!-- Withdrawal Form Card -->
+      <div class="card rise d2">
+        <div class="sec" style="margin-top:0;">Request Withdrawal</div>
+        
+        <label class="lbl">Amount (FCFA)</label>
+        <input class="input" id="wAmt" type="number" placeholder="Enter amount" oninput="summary()" />
+        
+        <!-- Live Fee Summary Box -->
+        <div class="card" style="background:rgba(53,199,255,.06);margin-bottom:10px;border:none;box-shadow:none;">
+          <div class="row"><div class="grow mut">Charge (<span id="lblFeePct">8</span>%)</div><div class="amt gold" id="wFee" style="font-size:13px;">0 FCFA</div></div>
+          <div class="row" style="margin-top:6px;"><div class="grow mut">You receive</div><div class="amt green" id="wNet" style="font-size:15px;">0 FCFA</div></div>
+        </div>
+
+        <label class="lbl">Recipient Name</label>
+        <input class="input" id="wName" placeholder="Full name on MoMo account" />
+        
+        <label class="lbl">Recipient MoMo Number</label>
+        <!-- Local format input (starts with 6) -->
+        <input class="input" id="wMobile" placeholder="6XXXXXXXXX" maxlength="9" inputmode="numeric" pattern="[6][0-9]{8}" />
+        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter number starting with 6 (e.g. 678854784)</div>
+        
+        <label class="lbl">Network Operator</label>
+        <select class="input" id="wOperator">
+          <option value="mtn">MTN Mobile Money</option>
+          <option value="orange">Orange Money</option>
+        </select>
+        
+        <button class="btn primary" id="wBtn">💸 Request Withdrawal</button>
+        <div class="mut" style="margin-top:8px;text-align:center;font-size:11px;">
+          Unlimited requests • Processed by our payment partner.<br>
+          Minimum: <span id="lblMinWd">1,500</span> FCFA
+        </div>
+      </div>
+
+      <!-- My Withdrawals History -->
+      <div class="sec rise d3">My Recent Withdrawals</div>
+      <div id="wList"></div>
+    </div>
   </div>
+  
   <div id="app-footer"></div>
   <div id="toast"></div>
 
@@ -50,72 +76,225 @@
   <script src="/assets/js/components.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
-    let SESSION = null, FEE = 8, MIN = 1500;
+    let SESSION = null;
+    let UID = null;
+    let FEE_PCT = 8; // Default fallback
+    let MIN_WD = 1500; // Default fallback
+
     function summary() {
       const a = Number(document.getElementById('wAmt').value || 0);
-      const f = Math.round(a * FEE / 100);
+      const f = Math.round(a * FEE_PCT / 100);
       document.getElementById('wFee').textContent = fmt(f);
       document.getElementById('wNet').textContent = fmt(a - f);
     }
 
     document.addEventListener('DOMContentLoaded', async function () {
+      // 1. GET SESSION
       SESSION = await CniAuth.requireAuth();
       if (!SESSION) return;
-      const profile = await CniAuth.getProfile(SESSION.user.id);
-      CniUI.header(SESSION, profile);
-      CniUI.nav();
-      const wallet = await CniAuth.getWallet(SESSION.user.id);
-      document.getElementById('balAmt').textContent = fmt(wallet?.balance);
-      const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
-      if (s) { FEE = Number(s.withdrawal_fee_percent); MIN = Number(s.min_withdrawal); }
-      document.getElementById('wMin').textContent = 'min ' + MIN.toLocaleString();
-      if (profile?.full_name) document.getElementById('wName').value = profile.full_name;
-      if (profile?.phone) document.getElementById('wMobile').value = profile.phone;
-      load();
+      
+      UID = SESSION.user.id;
+      console.log('[WITHDRAW] Session loaded for:', UID);
 
-      document.getElementById('wBtn').addEventListener('click', async () => {
-        const amt = Number(document.getElementById('wAmt').value);
-        if (!amt || amt < MIN) return CniAuth.toast('Minimum withdrawal is ' + MIN.toLocaleString() + ' FCFA', 'error');
-        const name = document.getElementById('wName').value.trim();
-        const mobile = document.getElementById('wMobile').value.replace(/\s/g, '');
-        if (name.length < 3) return CniAuth.toast('Enter recipient name', 'error');
-        if (!/^237\d{9}$/.test(mobile)) return CniAuth.toast('Enter a valid 237... number', 'error');
-        const btn = document.getElementById('wBtn');
-        btn.disabled = true; btn.textContent = 'Submitting…';
-        try {
-          const res = await fetch('/api/withdraw/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-            body: JSON.stringify({ amount: amt, recipient_name: name, recipient_mobile: mobile, country_code: 'CM', operator: document.getElementById('wOperator').value })
-          });
-          const d = await res.json();
-          if (!res.ok || !d.ok) throw new Error(d.error || 'Request failed');
-          CniAuth.toast('✅ Request queued for processing');
-          const w2 = await CniAuth.getWallet(SESSION.user.id);
-          document.getElementById('balAmt').textContent = fmt(w2?.balance);
-          document.getElementById('wAmt').value = ''; summary();
-          load();
-        } catch (e) {
-          CniAuth.toast(e.message, 'error');
-        } finally {
-          btn.disabled = false; btn.textContent = '💸 Request Withdrawal';
+      try {
+        // 2. FETCH PROFILE & WALLET IN PARALLEL USING .maybeSingle()
+        const [profileRes, walletRes, settingsRes] = await Promise.all([
+          window.sb.from('users').select('*').eq('id', UID).maybeSingle(),
+          window.sb.from('wallets').select('*').eq('user_id', UID).maybeSingle(),
+          window.sb.from('platform_settings').select('*').eq('id', 1).single()
+        ]);
+
+        // Handle Missing Rows (Self-Heal)
+        let profile = profileRes.data;
+        let wallet = walletRes.data;
+
+        if (!profile) {
+          console.warn('[WITHDRAW] Profile row missing! Creating...');
+          const code = 'CNI' + Math.random().toString(36).slice(2,7).toUpperCase();
+          const meta = SESSION.user.user_metadata || {};
+          
+          const { data: newProf, error: profErr } = await window.sb.from('users').insert({
+            id: UID, 
+            email: SESSION.user.email, 
+            full_name: meta.full_name || 'Member',
+            phone: meta.phone || null, 
+            referral_code: code,
+            vip_level: 0, is_admin: false, is_banned: false
+          }).select().single();
+
+          if (profErr) throw new Error('Failed to create profile: ' + profErr.message);
+          profile = newProf;
         }
-      });
+
+        if (!wallet) {
+          console.warn('[WITHDRAW] Wallet row missing! Creating...');
+          
+          const { data: newWal, error: walErr } = await window.sb.from('wallets').insert({
+            user_id: UID, 
+            balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0
+          }).select().single();
+
+          if (walErr) throw new Error('Failed to create wallet: ' + walErr.message);
+          wallet = newWal;
+        }
+
+        // Extract Settings
+        const s = settingsRes.data;
+        if (s) {
+          FEE_PCT = Number(s.withdrawal_fee_percent ?? 8);
+          MIN_WD = Number(s.min_withdrawal ?? 1500);
+          document.getElementById('lblFeePct').textContent = FEE_PCT;
+          document.getElementById('feeChip').textContent = FEE_PCT + '% FEE';
+          document.getElementById('lblMinWd').textContent = MIN_WD.toLocaleString();
+        }
+
+        // 3. RENDER HEADER & NAV
+        CniUI.header(SESSION, profile);
+        CniUI.nav();
+
+        // 4. UPDATE BALANCE DISPLAY
+        document.getElementById('balAmt').textContent = fmt(wallet.balance);
+
+        // Prefill recipient info if available
+        if (profile?.full_name) document.getElementById('wName').value = profile.full_name;
+        if (profile?.phone) {
+          let p = String(profile.phone).replace(/\s/g, '');
+          if (p.startsWith('237')) p = p.slice(3); // Convert global -> local for display
+          if (/^6\d{8}$/.test(p)) document.getElementById('wMobile').value = p;
+        }
+
+        // 5. LOAD HISTORY
+        loadHistory();
+
+        // Show Content
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+
+        // 6. BIND SUBMIT HANDLER
+        document.getElementById('wBtn').addEventListener('click', handleWithdraw);
+
+      } catch (err) {
+        console.error('[WITHDRAW] Init Error:', err);
+        document.getElementById('loadingState').innerHTML = 
+          `<div style="color:var(--cni-red);">❌ Failed to load withdrawal page.<br>${err.message}</div>`;
+      }
     });
 
-    async function load() {
-      const { data: wds } = await window.sb.from('withdrawal_requests')
-        .select('*').eq('user_id', SESSION.user.id).order('created_at', { ascending: false }).limit(15);
-      document.getElementById('wList').innerHTML = (wds || []).length ? (wds || []).map(w => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div class="name">${fmt(w.amount)}</div>
-              <div class="mut">${CniAuth.timeAgo(w.created_at)} • receive ${fmt(w.net_amount)} • ${w.recipient_mobile}</div>
+    async function handleWithdraw() {
+      const amtInput = document.getElementById('wAmt');
+      const nameInput = document.getElementById('wName');
+      const mobileInput = document.getElementById('wMobile');
+      const opSelect = document.getElementById('wOperator');
+      const btn = document.getElementById('wBtn');
+
+      const amount = Number(amtInput.value);
+      const localMobile = mobileInput.value.replace(/\s/g, '');
+      const name = nameInput.value.trim();
+      const operator = opSelect.value;
+
+      // --- VALIDATION ---
+      if (!amount || amount < MIN_WD) {
+        return showToast(`Minimum withdrawal is ${MIN_WD.toLocaleString()} FCFA`, 'error');
+      }
+      if (name.length < 3) {
+        return showToast('Please enter recipient full name', 'error');
+      }
+      if (!/^6\d{8}$/.test(localMobile)) {
+        return showToast('Enter a valid Cameroon MoMo number (e.g. 678854784)', 'error');
+      }
+
+      // Construct Full International Number for API
+      const fullMobile = '237' + localMobile;
+
+      // Disable button during request
+      btn.disabled = true;
+      btn.textContent = '⏳ Submitting...';
+
+      try {
+        const res = await fetch('/api/withdraw/create', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Authorization': 'Bearer ' + SESSION.access_token 
+          },
+          body: JSON.stringify({ 
+            amount: amount, 
+            recipient_name: name, 
+            recipient_mobile: fullMobile, 
+            country_code: 'CM', 
+            operator: operator 
+          })
+        });
+
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) throw new Error(`Server returned HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'Withdrawal request failed');
+        }
+
+        // Success -> Refresh Balance & List
+        showToast('✅ Request queued for processing!', 'success');
+        
+        // Update UI immediately
+        const w2 = await CniAuth.getWallet(UID);
+        document.getElementById('balAmt').textContent = fmt(w2?.balance);
+        amtInput.value = ''; 
+        summary();
+        loadHistory();
+
+      } catch (err) {
+        console.error('[WITHDRAW] Create Failed:', err);
+        showToast(err.message || 'Failed to submit withdrawal.', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '💸 Request Withdrawal';
+      }
+    }
+
+    async function loadHistory() {
+      const container = document.getElementById('wList');
+      try {
+        const { data: wds } = await window.sb.from('withdrawal_requests')
+          .select('*')
+          .eq('user_id', UID)
+          .order('created_at', { ascending: false })
+          .limit(15);
+
+        if (!wds || wds.length === 0) {
+          container.innerHTML = '<div class="empty">No withdrawals yet.</div>';
+          return;
+        }
+
+        container.innerHTML = wds.map(w => {
+          // Display logic: Strip 237 for cleaner UI if present in DB
+          let displayPhone = w.recipient_mobile || '';
+          if (displayPhone.startsWith('237')) displayPhone = displayPhone.slice(3);
+
+          return `
+          <div class="card" style="padding:12px 14px;margin-bottom:8px;">
+            <div class="row">
+              <div class="grow">
+                <div class="name">${fmt(w.amount)}</div>
+                <div class="mut">${CniAuth.timeAgo(w.created_at)} • Receive ${fmt(w.net_amount)}<br>To: ${displayPhone} (${w.operator?.toUpperCase()})</div>
+              </div>
+              <div class="right">
+                <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
+              </div>
             </div>
-            <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
-          </div>
-        </div>`).join('') : '<div class="empty">No withdrawals yet.</div>';
+          </div>`;
+        }).join('');
+
+      } catch (e) {
+        console.error('[WITHDRAW] History Load Error:', e);
+        container.innerHTML = '<div class="empty">Could not load history.</div>';
+      }
+    }
+
+    function showToast(msg, type) {
+      CniAuth.toast(msg, type);
     }
   </script>
 </body>
