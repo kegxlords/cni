@@ -9,23 +9,53 @@
 </head>
 <body>
   <div id="app-header"></div>
+  
   <div class="wrap">
-    <div class="card glow rise d1">
-      <div class="row">
-        <div class="grow"><div class="lbl">Your Balance</div><div class="amt cyan" id="balAmt">0 FCFA</div></div>
-        <a class="btn sm cyan" href="/deposit">+ Deposit</a>
-      </div>
+    <!-- Loading State -->
+    <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
+      📈 Loading packages...
     </div>
 
-    <div class="sec rise d2">Network Packages (15 Days)</div>
-    <div class="card rise d2" style="padding:10px;">
-      <table class="tbl">
-        <thead><tr><th>Package</th><th>Daily</th><th>Total</th><th></th></tr></thead>
-        <tbody id="pkgTbl"></tbody>
-      </table>
+    <!-- Main Content -->
+    <div id="mainContent" style="display:none;">
+      
+      <!-- Balance Header Card -->
+      <div class="card glow rise d1">
+        <div class="row">
+          <div class="grow">
+            <div class="lbl">Your Available Balance</div>
+            <div class="amt cyan" id="balAmt" style="font-size:26px;">0 FCFA</div>
+          </div>
+          <a class="btn sm cyan" href="/deposit">+ Deposit</a>
+        </div>
+      </div>
+
+      <!-- Package Table Section -->
+      <div class="sec rise d2">Network Packages (15 Days)</div>
+      <div class="card rise d2" style="padding:10px;overflow-x:auto;">
+        <table class="tbl" id="pkgTbl">
+          <thead>
+            <tr>
+              <th>Package Amount</th>
+              <th>Daily Earning</th>
+              <th>Total (15d)</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="pkgBody">
+            <!-- Rows injected via JS -->
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="mut rise d3" style="text-align:center;font-size:11px;line-height:1.6;margin-top:10px;">
+        • One active purchase per package tier.<br>
+        • 32.5% daily yield credited every morning.<br>
+        • Auto-completes after 15 days.
+      </div>
     </div>
-    <div class="mut" style="text-align:center;margin-bottom:30px;">One active purchase per package • 32.5% daily for 15 days</div>
   </div>
+  
   <div id="app-footer"></div>
   <div id="toast"></div>
 
@@ -35,41 +65,122 @@
   <script src="/assets/js/components.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null;
     let UID = null;
+
     document.addEventListener('DOMContentLoaded', async function () {
-      const session = await CniAuth.requireAuth();
-      if (!session) return;
-      UID = session.user.id;
-      const profile = await CniAuth.getProfile(UID);
-      CniUI.header(session, profile);
-      CniUI.nav();
-      load();
+      // 1. GET SESSION
+      SESSION = await CniAuth.requireAuth();
+      if (!SESSION) return;
+      
+      UID = SESSION.user.id;
+      console.log('[INVEST] Session loaded for:', UID);
+
+      try {
+        // 2. FETCH PROFILE & WALLET IN PARALLEL
+        const [profileRes, walletRes] = await Promise.all([
+          window.sb.from('users').select('*').eq('id', UID).single(),
+          window.sb.from('wallets').select('*').eq('user_id', UID).single()
+        ]);
+
+        // Handle Missing Rows (Self-Heal)
+        let profile = profileRes.data;
+        let wallet = walletRes.data;
+
+        if (!profile) {
+          console.warn('[INVEST] Profile row missing! Creating...');
+          const code = 'CNI' + Math.random().toString(36).slice(2,7).toUpperCase();
+          const meta = SESSION.user.user_metadata || {};
+          const { data: newProf } = await window.sb.from('users').insert({
+            id: UID, email: SESSION.user.email, full_name: meta.full_name || 'Member',
+            phone: meta.phone || null, referral_code: code
+          }).select().single();
+          profile = newProf;
+        }
+
+        if (!wallet) {
+          console.warn('[INVEST] Wallet row missing! Creating...');
+          const { data: newWal } = await window.sb.from('wallets').insert({
+            user_id: UID, balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0
+          }).select().single();
+          wallet = newWal;
+        }
+
+        // 3. RENDER HEADER & NAV
+        CniUI.header(SESSION, profile);
+        CniUI.nav();
+
+        // 4. UPDATE BALANCE DISPLAY
+        document.getElementById('balAmt').textContent = fmt(wallet.balance);
+
+        // 5. FETCH PRODUCTS & OWNED STATUS
+        const [{ data: products }, { data: owned }] = await Promise.all([
+          window.sb.from('products').select('*').eq('is_active', true).order('amount'),
+          window.sb.from('user_products').select('product_id').eq('user_id', UID).eq('status', 'active')
+        ]);
+
+        const ownedIds = new Set((owned || []).map(o => o.product_id));
+        const pkgList = products || [];
+
+        if (pkgList.length === 0) {
+          document.getElementById('pkgBody').innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--cni-mut);">No packages available.</td></tr>';
+        } else {
+          document.getElementById('pkgBody').innerHTML = pkgList.map(p => {
+            const isOwned = ownedIds.has(p.id);
+            const canAfford = Number(wallet.balance) >= Number(p.amount);
+            
+            let actionHtml = '';
+            if (isOwned) {
+              actionHtml = '<span class="chip active">OWNED</span>';
+            } else if (!canAfford) {
+              actionHtml = `<button class="btn sm ghost" disabled>Insufficient</button>`;
+            } else {
+              actionHtml = `<button class="btn sm cyan" onclick="buyPackage('${p.id}', '${p.name.replace(/'/g, "\\'")}', ${p.amount})">BUY NOW</button>`;
+            }
+
+            return `
+            <tr>
+              <td class="amt">${Number(p.amount).toLocaleString()}</td>
+              <td>${Number(p.daily_income).toLocaleString()}</td>
+              <td class="gold">${(Number(p.daily_income) * 15).toLocaleString()}</td>
+              <td>${actionHtml}</td>
+            </tr>`;
+          }).join('');
+        }
+
+        // Show Content
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+
+      } catch (err) {
+        console.error('[INVEST] Critical Error:', err);
+        document.getElementById('loadingState').innerHTML = 
+          `<div style="color:var(--cni-red);">❌ Failed to load investment page.<br>${err.message}</div>`;
+      }
     });
 
-    async function load() {
-      const wallet = await CniAuth.getWallet(UID);
-      document.getElementById('balAmt').textContent = fmt(wallet?.balance);
-      const [{ data: products }, { data: owned }] = await Promise.all([
-        window.sb.from('products').select('*').eq('is_active', true).order('amount'),
-        window.sb.from('user_products').select('product_id').eq('user_id', UID).eq('status', 'active')
-      ]);
-      const ownedIds = new Set((owned || []).map(o => o.product_id));
-      document.getElementById('pkgTbl').innerHTML = (products || []).map(p => `
-        <tr>
-          <td class="amt">${Number(p.amount).toLocaleString()}</td>
-          <td>${Number(p.daily_income).toLocaleString()}</td>
-          <td class="gold">${(Number(p.daily_income) * 15).toLocaleString()}</td>
-          <td>${ownedIds.has(p.id)
-            ? '<span class="chip active">OWNED</span>'
-            : `<button class="btn sm cyan" onclick="buy('${p.id}', '${p.name}', ${p.amount})">BUY</button>`}</td>
-        </tr>`).join('');
-    }
+    async function buyPackage(productId, productName, amount) {
+      if (!confirm(`Purchase ${productName} for ${fmt(amount)}?\nYou will earn 32.5% daily for 15 days.`)) return;
 
-    async function buy(id, name, amount) {
-      if (!confirm(`Purchase ${name} for ${fmt(amount)}?\nYou will earn 32.5% daily for 15 days.`)) return;
-      const { data } = await window.sb.rpc('purchase_product', { p_user_id: UID, p_product_id: id });
-      if (data?.ok) { CniAuth.toast('🎉 Package activated — earning starts tomorrow'); load(); }
-      else CniAuth.toast(data?.error || 'Purchase failed', 'error');
+      try {
+        const { data, error } = await window.sb.rpc('purchase_product', { 
+          p_user_id: UID, 
+          p_product_id: productId 
+        });
+
+        if (error) throw error;
+        
+        if (data?.ok) {
+          CniAuth.toast('🎉 Package activated! Earnings start tomorrow.', 'success');
+          // Refresh page to update balance and owned status
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          throw new Error(data?.error || 'Purchase failed');
+        }
+      } catch (e) {
+        console.error('[INVEST] Purchase Error:', e);
+        CniAuth.toast(e.message || 'Failed to purchase package', 'error');
+      }
     }
   </script>
 </body>
