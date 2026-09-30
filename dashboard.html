@@ -84,10 +84,11 @@
       console.log('[DASH] Session loaded for:', UID);
 
       try {
-        // 2. FETCH PROFILE & WALLET IN PARALLEL
+        // 2. FETCH PROFILE & WALLET IN PARALLEL USING .maybeSingle()
+        // .maybeSingle() returns { data: null } instead of throwing an error if no row exists
         const [profileRes, walletRes] = await Promise.all([
-          window.sb.from('users').select('*').eq('id', UID).single(),
-          window.sb.from('wallets').select('*').eq('user_id', UID).single()
+          window.sb.from('users').select('*').eq('id', UID).maybeSingle(),
+          window.sb.from('wallets').select('*').eq('user_id', UID).maybeSingle()
         ]);
 
         // Handle Missing Rows (Self-Heal)
@@ -98,18 +99,36 @@
           console.warn('[DASH] Profile row missing! Creating...');
           const code = 'CNI' + Math.random().toString(36).slice(2,7).toUpperCase();
           const meta = session.user.user_metadata || {};
-          const { data: newProf } = await window.sb.from('users').insert({
-            id: UID, email: session.user.email, full_name: meta.full_name || 'Member',
-            phone: meta.phone || null, referral_code: code
+          
+          // Insert new profile
+          const { data: newProf, error: profErr } = await window.sb.from('users').insert({
+            id: UID, 
+            email: session.user.email, 
+            full_name: meta.full_name || 'Member',
+            phone: meta.phone || null, 
+            referral_code: code,
+            vip_level: 0,
+            is_admin: false,
+            is_banned: false
           }).select().single();
+
+          if (profErr) throw new Error('Failed to create profile: ' + profErr.message);
           profile = newProf;
         }
 
         if (!wallet) {
           console.warn('[DASH] Wallet row missing! Creating...');
-          const { data: newWal } = await window.sb.from('wallets').insert({
-            user_id: UID, balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0
+          
+          // Insert new wallet
+          const { data: newWal, error: walErr } = await window.sb.from('wallets').insert({
+            user_id: UID, 
+            balance: 0, 
+            total_deposit: 0, 
+            total_profit: 0, 
+            total_referral_earnings: 0
           }).select().single();
+
+          if (walErr) throw new Error('Failed to create wallet: ' + walErr.message);
           wallet = newWal;
         }
 
