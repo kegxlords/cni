@@ -1,4 +1,4 @@
-// api/auth.js — registration (trigger creates profile + wallet)
+// api/auth.js — registration (explicitly creates profile + wallet, no trigger dependency)
 const { createClient } = require('@supabase/supabase-js');
 
 module.exports = async function handler(req, res) {
@@ -16,24 +16,65 @@ module.exports = async function handler(req, res) {
   if ((full_name || '').trim().length < 3) return res.status(400).json({ ok: false, error: 'Full name required' });
 
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  
   try {
-    let referrer = null;
+    // 1. Find referrer if code provided
+    let referrerId = null;
     const code = (referral_code || '').trim().toUpperCase();
     if (code) {
       const { data: ref } = await supabase.from('users').select('id').eq('referral_code', code).single();
       if (!ref) return res.status(400).json({ ok: false, error: 'Invalid referral code' });
-      referrer = code;
+      referrerId = ref.id;
     }
 
-    const { data, error } = await supabase.auth.admin.createUser({
+    // 2. Create Auth User (Service Role bypasses RLS & Triggers)
+    const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email: email.toLowerCase().trim(),
       password,
       email_confirm: true,
-      user_metadata: { full_name: full_name.trim(), phone: phone || null, referral_code: referrer }
+      user_metadata: { full_name: full_name.trim(), phone: phone || null, referral_code: code }
     });
-    if (error) return res.status(400).json({ ok: false, error: error.message });
-    return res.status(200).json({ ok: true, id: data.user.id });
+    if (authErr) return res.status(400).json({ ok: false, error: authErr.message });
+
+    const uid = authData.user.id;
+
+    // 3. Generate unique Referral Code for NEW USER
+    let newRefCode = '';
+    for (let i = 0; i < 5; i++) {
+      const candidate = 'CNI' + Math.random().toString(36).slice(2, 7).toUpperCase();
+      const { data: check } = await supabase.from('users').select('id').eq('referral_code', candidate).single();
+      if (!check) { newRefCode = candidate; break; }
+    }
+    if (!newRefCode) newRefCode = 'CNI' + Date.now().toString(36).slice(-5).toUpperCase();
+
+    // 4. INSERT PROFILE ROW EXPLICITLY (Fixes "Member / No Phone")
+    const { error: profErr } = await supabase.from('users').insert({
+      id: uid,
+      email: email.toLowerCase().trim(),
+      full_name: full_name.trim(),
+      phone: phone || null,
+      referral_code: newRefCode,
+      referred_by: referrerId,
+      vip_level: 0,
+      is_admin: false,
+      is_banned: false
+    });
+    if (profErr) throw new Error('Profile creation failed: ' + profErr.message);
+
+    // 5. INSERT WALLET ROW EXPLICITLY
+    const { error: walErr } = await supabase.from('wallets').insert({
+      user_id: uid,
+      balance: 0,
+      total_deposit: 0,
+      total_profit: 0,
+      total_referral_earnings: 0
+    });
+    if (walErr) throw new Error('Wallet creation failed: ' + walErr.message);
+
+    return res.status(200).json({ ok: true, id: uid, referral_code: newRefCode });
+
   } catch (e) {
+    console.error('[CNI] Register exception:', e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 };
