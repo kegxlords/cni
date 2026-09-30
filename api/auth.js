@@ -1,4 +1,4 @@
-// api/auth.js — registration (explicitly creates profile + wallet, no trigger dependency)
+// api/auth.js — registration (uses UPSERT to handle both trigger-fired and manual cases)
 const { createClient } = require('@supabase/supabase-js');
 
 module.exports = async function handler(req, res) {
@@ -27,7 +27,7 @@ module.exports = async function handler(req, res) {
       referrerId = ref.id;
     }
 
-    // 2. Create Auth User (Service Role bypasses RLS & Triggers)
+    // 2. Create Auth User (Service Role bypasses RLS & Triggers initially)
     const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email: email.toLowerCase().trim(),
       password,
@@ -47,8 +47,10 @@ module.exports = async function handler(req, res) {
     }
     if (!newRefCode) newRefCode = 'CNI' + Date.now().toString(36).slice(-5).toUpperCase();
 
-    // 4. INSERT PROFILE ROW EXPLICITLY (Fixes "Member / No Phone")
-    const { error: profErr } = await supabase.from('users').insert({
+    // 4. 🛡️ SAFE PROFILE CREATION (Uses UPSERT to avoid duplicates)
+    // If trigger ran first, this UPDATES the existing row instead of crashing.
+    // If trigger failed/didn't run, this INSERTS a fresh row.
+    const { error: profErr } = await supabase.from('users').upsert({
       id: uid,
       email: email.toLowerCase().trim(),
       full_name: full_name.trim(),
@@ -58,17 +60,19 @@ module.exports = async function handler(req, res) {
       vip_level: 0,
       is_admin: false,
       is_banned: false
-    });
+    }, { onConflict: 'id' }); // Only conflict on Primary Key (ID)
+
     if (profErr) throw new Error('Profile creation failed: ' + profErr.message);
 
-    // 5. INSERT WALLET ROW EXPLICITLY
-    const { error: walErr } = await supabase.from('wallets').insert({
+    // 5. 🛡️ SAFE WALLET CREATION (Also uses UPSERT)
+    const { error: walErr } = await supabase.from('wallets').upsert({
       user_id: uid,
       balance: 0,
       total_deposit: 0,
       total_profit: 0,
       total_referral_earnings: 0
-    });
+    }, { onConflict: 'user_id' });
+
     if (walErr) throw new Error('Wallet creation failed: ' + walErr.message);
 
     return res.status(200).json({ ok: true, id: uid, referral_code: newRefCode });
