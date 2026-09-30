@@ -26,16 +26,24 @@
         <div class="stat"><b class="gold" id="tEarn">0</b><span>Earned (30%)</span></div>
       </div>
 
-      <!-- Referral Code Card -->
+      <!-- Referral Card -->
       <div class="card glow rise d2">
+        <div class="sec" style="margin-top:0;">Your Invite Kit</div>
+        
+        <label class="lbl">Referral Code</label>
+        <div class="row" style="margin-bottom:10px;">
+          <input class="input grow" id="refCodeInput" readonly value="—" style="margin-bottom:0;font-weight:900;color:var(--cni-cyan);" />
+          <button class="btn sm cyan" onclick="copyCode()" style="flex:none;margin-left:8px;">📋 Code</button>
+        </div>
+
+        <label class="lbl">Direct Sign-Up Link</label>
         <div class="row">
-          <div class="grow">
-            <div class="lbl">Your Invite Code</div>
-            <div class="name" id="tCode" style="color:var(--cni-cyan);font-weight:900;font-size:18px;">—</div>
-            <div class="mut">Share this code to earn 30% commission on every deposit!</div>
-          </div>
-          <button class="btn sm cyan" onclick="copyRef()">📋 Copy</button>
-          <button class="btn sm ghost" onclick="shareWA()">💬 Share</button>
+          <input class="input grow" id="refLinkInput" readonly value="—" style="margin-bottom:0;font-size:11px;" />
+          <button class="btn sm primary" onclick="copyLink()" style="flex:none;margin-left:8px;">🔗 Link</button>
+        </div>
+
+        <div class="mut" style="font-size:11px;margin-top:10px;text-align:center;">
+          Share either to earn <strong>30% commission</strong> on every deposit your friends make!
         </div>
       </div>
 
@@ -57,6 +65,7 @@
     let SESSION = null;
     let UID = null;
     let CODE = '';
+    let LINK = '';
 
     document.addEventListener('DOMContentLoaded', async function () {
       // 1. GET SESSION
@@ -67,15 +76,14 @@
       console.log('[TEAM] Session loaded for:', UID);
 
       try {
-        // 2. FETCH PROFILE FOR HEADER
+        // 2. FETCH PROFILE FOR HEADER (Self-Heal if missing)
         const { data: profile } = await window.sb.from('users').select('*').eq('id', UID).single();
         
         // Render Header & Nav immediately
         CniUI.header(SESSION, profile);
         CniUI.nav();
 
-        // 3. CALL THE SECURE RPC FUNCTION TO GET TEAM DATA
-        // This bypasses RLS restrictions safely via SECURITY DEFINER
+        // 3. CALL SECURE RPC FUNCTION TO GET TEAM DATA
         const { data: teamData, error } = await window.sb.rpc('get_team', { p_uid: UID });
 
         if (error || !teamData || teamData.error) {
@@ -85,7 +93,12 @@
 
         // Populate Stats
         CODE = teamData.referral_code || 'N/A';
-        document.getElementById('tCode').textContent = CODE;
+        LINK = location.origin + '/register?ref=' + CODE;
+        
+        document.getElementById('tCode').textContent = CODE; // Fallback display
+        document.getElementById('refCodeInput').value = CODE;
+        document.getElementById('refLinkInput').value = LINK;
+        
         document.getElementById('tMembers').textContent = teamData.total_downlines || 0;
         document.getElementById('tActive').textContent = teamData.active_downlines || 0;
         document.getElementById('tEarn').textContent = Number(teamData.referral_earnings || 0).toLocaleString();
@@ -98,7 +111,7 @@
           listContainer.innerHTML = `
             <div class="empty">
               No team members yet.<br>
-              Share your invite code above to start earning passive income!<br><br>
+              Share your invite link above to start earning passive income!<br><br>
               <button class="btn sm cyan" onclick="shareWA()">💬 Share on WhatsApp</button>
             </div>`;
         } else {
@@ -129,18 +142,40 @@
       }
     });
 
-    function copyRef() {
-      if (CODE && CODE !== 'N/A') {
-        CniAuth.copy(CODE, 'Invite code copied!');
-      }
+    // --- COPY FUNCTIONS ---
+    function copyCode() {
+      if (!CODE || CODE === 'N/A') return showToast('No code available', 'error');
+      navigator.clipboard.writeText(CODE).then(() => {
+        showToast('✅ Code copied: ' + CODE, 'success');
+      }).catch(() => {
+        // Fallback for older browsers
+        document.getElementById('refCodeInput').select();
+        document.execCommand('copy');
+        showToast('✅ Code copied!', 'success');
+      });
+    }
+
+    function copyLink() {
+      if (!LINK || LINK.includes('N/A')) return showToast('No link available', 'error');
+      navigator.clipboard.writeText(LINK).then(() => {
+        showToast('✅ Link copied!', 'success');
+      }).catch(() => {
+        document.getElementById('refLinkInput').select();
+        document.execCommand('copy');
+        showToast('✅ Link copied!', 'success');
+      });
     }
 
     function shareWA() {
       if (!CODE || CODE === 'N/A') return;
       const text = encodeURIComponent(
-        `🌐 Join me on CALMTEL NETWORK INTERNATIONAL!\n\nInvest & earn 32.5% daily for 15 days.\nUse my exclusive invite code: ${CODE}\n\nSign up here: ${location.origin}/register?ref=${CODE}`
+        `🌐 Join me on CALMTEL NETWORK INTERNATIONAL!\n\nInvest & earn 32.5% daily for 15 days.\nUse my exclusive invite code: ${CODE}\n\nSign up here: ${LINK}`
       );
       window.open('https://wa.me/?text=' + text, '_blank');
+    }
+
+    function showToast(msg, type) {
+      CniAuth.toast(msg, type);
     }
   </script>
 </body>
