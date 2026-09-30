@@ -95,9 +95,12 @@
         CODE = teamData.referral_code || 'N/A';
         LINK = location.origin + '/register?ref=' + CODE;
         
-        document.getElementById('tCode').textContent = CODE; // Fallback display
-        document.getElementById('refCodeInput').value = CODE;
-        document.getElementById('refLinkInput').value = LINK;
+        // FIX: Only target elements that actually exist in DOM
+        const codeEl = document.getElementById('refCodeInput');
+        const linkEl = document.getElementById('refLinkInput');
+        
+        if (codeEl) codeEl.value = CODE;
+        if (linkEl) linkEl.value = LINK;
         
         document.getElementById('tMembers').textContent = teamData.total_downlines || 0;
         document.getElementById('tActive').textContent = teamData.active_downlines || 0;
@@ -148,7 +151,6 @@
       navigator.clipboard.writeText(CODE).then(() => {
         showToast('✅ Code copied: ' + CODE, 'success');
       }).catch(() => {
-        // Fallback for older browsers
         document.getElementById('refCodeInput').select();
         document.execCommand('copy');
         showToast('✅ Code copied!', 'success');
