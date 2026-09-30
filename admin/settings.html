@@ -80,6 +80,7 @@
   <script src="/assets/js/supabase.js"></script>
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
+  <script src="/assets/js/admin-api.js"></script>
   <script>
     let SESSION = null;
 
@@ -145,8 +146,13 @@
     }
 
     async function loadSettings() {
-      const { data: s } = await window.sb.from('platform_settings').select('*').eq('id', 1).single();
-      if (!s) return;
+      let s;
+      try {
+        ({ settings: s } = await CniAdminApi.get('settings'));
+      } catch (error) {
+        CniAuth.toast(error.message || 'Could not load settings', 'error');
+        return;
+      }
       document.getElementById('setFee').value = s.withdrawal_fee_percent;
       document.getElementById('setBonus').value = s.referral_bonus_percent;
       document.getElementById('setMin').value = s.min_withdrawal;
