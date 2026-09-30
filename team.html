@@ -9,27 +9,42 @@
 </head>
 <body>
   <div id="app-header"></div>
+  
   <div class="wrap">
-    <div class="stats rise d1">
-      <div class="stat"><b id="tMembers">0</b><span>Members</span></div>
-      <div class="stat"><b class="cyan" id="tActive">0</b><span>Active</span></div>
-      <div class="stat"><b class="gold" id="tEarn">0</b><span>Earned</span></div>
+    <!-- Loading State -->
+    <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
+      👥 Loading your network...
     </div>
 
-    <div class="card glow rise d2">
-      <div class="row">
-        <div class="grow">
-          <div class="lbl">Invite & Earn 30%</div>
-          <div class="name" id="tCode" style="color:var(--cni-cyan);">—</div>
-        </div>
-        <button class="btn sm cyan" onclick="CniAuth.copy(document.getElementById('tCode').textContent)">📋</button>
-        <button class="btn sm ghost" onclick="share()">💬</button>
+    <!-- Main Content -->
+    <div id="mainContent" style="display:none;">
+      
+      <!-- Stats Grid -->
+      <div class="stats rise d1">
+        <div class="stat"><b id="tMembers">0</b><span>Total Members</span></div>
+        <div class="stat"><b class="cyan" id="tActive">0</b><span>Active Investors</span></div>
+        <div class="stat"><b class="gold" id="tEarn">0</b><span>Earned (30%)</span></div>
       </div>
-    </div>
 
-    <div class="sec rise d3">My Downline</div>
-    <div id="tList"></div>
+      <!-- Referral Code Card -->
+      <div class="card glow rise d2">
+        <div class="row">
+          <div class="grow">
+            <div class="lbl">Your Invite Code</div>
+            <div class="name" id="tCode" style="color:var(--cni-cyan);font-weight:900;font-size:18px;">—</div>
+            <div class="mut">Share this code to earn 30% commission on every deposit!</div>
+          </div>
+          <button class="btn sm cyan" onclick="copyRef()">📋 Copy</button>
+          <button class="btn sm ghost" onclick="shareWA()">💬 Share</button>
+        </div>
+      </div>
+
+      <!-- Downline List -->
+      <div class="sec rise d3">Downline Members</div>
+      <div id="tList"></div>
+    </div>
   </div>
+  
   <div id="app-footer"></div>
   <div id="toast"></div>
 
@@ -39,46 +54,94 @@
   <script src="/assets/js/components.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null;
+    let UID = null;
     let CODE = '';
-    function share() {
-      const txt = encodeURIComponent(`🌐 Join me on CALMTEL NETWORK INTERNATIONAL!\nInvest & earn 32.5% daily for 15 days.\nUse my code: ${CODE}\n${location.origin}/register?ref=${CODE}`);
-      window.open('https://wa.me/?text=' + txt, '_blank');
-    }
 
     document.addEventListener('DOMContentLoaded', async function () {
-      const session = await CniAuth.requireAuth();
-      if (!session) return;
-      const profile = await CniAuth.getProfile(session.user.id);
-      CniUI.header(session, profile);
-      CniUI.nav();
+      // 1. GET SESSION
+      SESSION = await CniAuth.requireAuth();
+      if (!SESSION) return;
+      
+      UID = SESSION.user.id;
+      console.log('[TEAM] Session loaded for:', UID);
 
-      const { data: team, error } = await window.sb.rpc('get_team', { p_uid: session.user.id });
-      if (error || !team || team.error) {
-        document.getElementById('tList').innerHTML = '<div class="empty">Failed to load team.</div>';
-        return;
+      try {
+        // 2. FETCH PROFILE FOR HEADER
+        const { data: profile } = await window.sb.from('users').select('*').eq('id', UID).single();
+        
+        // Render Header & Nav immediately
+        CniUI.header(SESSION, profile);
+        CniUI.nav();
+
+        // 3. CALL THE SECURE RPC FUNCTION TO GET TEAM DATA
+        // This bypasses RLS restrictions safely via SECURITY DEFINER
+        const { data: teamData, error } = await window.sb.rpc('get_team', { p_uid: UID });
+
+        if (error || !teamData || teamData.error) {
+          console.error('[TEAM] RPC Error:', error || teamData);
+          throw new Error(error?.message || 'Failed to load team statistics.');
+        }
+
+        // Populate Stats
+        CODE = teamData.referral_code || 'N/A';
+        document.getElementById('tCode').textContent = CODE;
+        document.getElementById('tMembers').textContent = teamData.total_downlines || 0;
+        document.getElementById('tActive').textContent = teamData.active_downlines || 0;
+        document.getElementById('tEarn').textContent = Number(teamData.referral_earnings || 0).toLocaleString();
+
+        // Render Member Cards
+        const members = teamData.members || [];
+        const listContainer = document.getElementById('tList');
+
+        if (members.length === 0) {
+          listContainer.innerHTML = `
+            <div class="empty">
+              No team members yet.<br>
+              Share your invite code above to start earning passive income!<br><br>
+              <button class="btn sm cyan" onclick="shareWA()">💬 Share on WhatsApp</button>
+            </div>`;
+        } else {
+          listContainer.innerHTML = members.map(m => `
+            <div class="card" style="padding:12px 14px;margin-bottom:8px;">
+              <div class="row">
+                <div class="av" style="width:40px;height:40px;font-size:16px;">${(m.full_name || '?').charAt(0).toUpperCase()}</div>
+                <div class="grow">
+                  <div class="name" style="font-size:13px;">${m.full_name || 'Unnamed Member'}</div>
+                  <div class="mut" style="font-size:10px;">Joined ${new Date(m.created_at).toLocaleDateString()}<br>Deposited: ${fmt(m.total_deposit)} • Invested: ${fmt(m.invested)}</div>
+                </div>
+                <div class="right">
+                  <div class="amt gold" style="font-size:13px;">+${fmt(m.commission)}</div>
+                  <span class="chip ${m.active_plans > 0 ? 'active' : 'completed'}" style="font-size:9px;">${m.active_plans > 0 ? 'ACTIVE PLAN' : 'NO ACTIVE PLAN'}</span>
+                </div>
+              </div>
+            </div>`).join('');
+        }
+
+        // Show Content
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+
+      } catch (err) {
+        console.error('[TEAM] Critical Error:', err);
+        document.getElementById('loadingState').innerHTML = 
+          `<div style="color:var(--cni-red);">❌ Failed to load team page.<br>${err.message}</div>`;
       }
-      CODE = team.referral_code || '';
-      document.getElementById('tCode').textContent = CODE;
-      document.getElementById('tMembers').textContent = team.total_downlines;
-      document.getElementById('tActive').textContent = team.active_downlines;
-      document.getElementById('tEarn').textContent = Number(team.referral_earnings || 0).toLocaleString();
-
-      document.getElementById('tList').innerHTML = (team.members || []).length ? team.members.map(m => `
-        <div class="card">
-          <div class="row">
-            <div class="av">${(m.full_name || '?').charAt(0).toUpperCase()}</div>
-            <div class="grow">
-              <div class="name">${m.full_name}</div>
-              <div class="mut">Joined ${new Date(m.created_at).toLocaleDateString()} • Dep ${fmt(m.total_deposit)} • Inv ${fmt(m.invested)}</div>
-            </div>
-            <div class="right">
-              <div class="amt gold" style="font-size:13px;">+${fmt(m.commission)}</div>
-              <span class="chip ${m.active_plans > 0 ? 'active' : 'completed'}">${m.active_plans > 0 ? 'ACTIVE' : 'IDLE'}</span>
-            </div>
-          </div>
-        </div>`).join('')
-        : '<div class="empty">No team members yet.<br>Share your code to earn 30% on every deposit!</div>';
     });
+
+    function copyRef() {
+      if (CODE && CODE !== 'N/A') {
+        CniAuth.copy(CODE, 'Invite code copied!');
+      }
+    }
+
+    function shareWA() {
+      if (!CODE || CODE === 'N/A') return;
+      const text = encodeURIComponent(
+        `🌐 Join me on CALMTEL NETWORK INTERNATIONAL!\n\nInvest & earn 32.5% daily for 15 days.\nUse my exclusive invite code: ${CODE}\n\nSign up here: ${location.origin}/register?ref=${CODE}`
+      );
+      window.open('https://wa.me/?text=' + text, '_blank');
+    }
   </script>
 </body>
 </html>
