@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0033CC" />
+  <title>Transaction History - Calmtel Network International</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+  <style>
+    .chips button.on { background: var(--cni-cyan); color: #04263B; border-color: transparent; box-shadow: 0 0 14px rgba(53,199,255,.5); }
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="wrap">
+    <div class="card glow rise d1">
+      <div class="row">
+        <div class="grow"><div class="lbl">Total In</div><div class="amt green" id="hIn">0 FCFA</div></div>
+        <div class="right"><div class="lbl">Total Out</div><div class="amt red" id="hOut">0 FCFA</div></div>
+      </div>
+    </div>
+
+    <div class="chips rise d2" id="filters">
+      <button class="on" data-f="all">All</button>
+      <button data-f="deposit">Deposits</button>
+      <button data-f="investment">Investments</button>
+      <button data-f="income">Income</button>
+      <button data-f="referral">Referrals</button>
+      <button data-f="withdrawal">Withdrawals</button>
+      <button data-f="refund">Refunds</button>
+    </div>
+
+    <div id="hList" class="rise d3"></div>
+  </div>
+  <div id="app-footer"></div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    let SESSION = null, FILTER = 'all';
+    const TYPE_MAP = {
+      deposit: ['deposit'], investment: ['investment'], income: ['daily_income'],
+      referral: ['referral_bonus'], withdrawal: ['withdrawal'], refund: ['withdrawal_refund']
+    };
+    const CHIP = {
+      deposit: 'paid', daily_income: 'active', referral_bonus: 'active',
+      withdrawal_refund: 'paid', withdrawal: 'pending', investment: 'sent', admin_adjust: 'completed'
+    };
+
+    document.addEventListener('DOMContentLoaded', async function () {
+      SESSION = await CniAuth.requireAuth();
+      if (!SESSION) return;
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.nav();
+
+      const { data: all } = await window.sb.from('wallet_transactions').select('amount').eq('user_id', SESSION.user.id);
+      const rows = all || [];
+      document.getElementById('hIn').textContent = fmt(rows.filter(t => Number(t.amount) >= 0).reduce((s, t) => s + Number(t.amount), 0));
+      document.getElementById('hOut').textContent = fmt(Math.abs(rows.filter(t => Number(t.amount) < 0).reduce((s, t) => s + Number(t.amount), 0)));
+
+      document.getElementById('filters').addEventListener('click', e => {
+        const b = e.target.closest('button'); if (!b) return;
+        const on = document.querySelector('#filters .on'); if (on) on.classList.remove('on');
+        b.classList.add('on');
+        FILTER = b.dataset.f;
+        load();
+      });
+      load();
+    });
+
+    async function load() {
+      let q = window.sb.from('wallet_transactions').select('*').eq('user_id', SESSION.user.id).order('created_at', { ascending: false }).limit(200);
+      if (FILTER !== 'all') q = q.in('type', TYPE_MAP[FILTER]);
+      const { data: tx } = await q;
+      const list = tx || [];
+      document.getElementById('hList').innerHTML = list.length ? list.map(t => {
+        const a = Number(t.amount);
+        return `
+        <div class="card" style="padding:12px 14px;">
+          <div class="row">
+            <div class="grow">
+              <div class="name" style="font-size:12.5px;">${t.description || t.type}</div>
+              <div class="mut">${new Date(t.created_at).toLocaleString()} • bal ${fmt(t.balance_after)}</div>
+            </div>
+            <div class="right">
+              <div class="amt ${a >= 0 ? 'green' : 'red'}" style="font-size:13px;">${a >= 0 ? '+' : ''}${fmt(a)}</div>
+              <span class="chip ${CHIP[t.type] || 'completed'}">${t.type.replace(/_/g, ' ').toUpperCase()}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty">No transactions in this category yet.</div>';
+    }
+  </script>
+</body>
+</html>
