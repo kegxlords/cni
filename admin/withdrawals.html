@@ -33,8 +33,11 @@
   <script src="/assets/js/supabase.js"></script>
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
+  <script src="/assets/js/admin-api.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
+    const jsArg = value => esc(JSON.stringify(String(value ?? '')));
     let SESSION = null, TAB = 'pending';
 
     async function act(id, action) {
@@ -56,52 +59,48 @@
     }
 
     async function load() {
-      const sb = window.sb;
-      const [{ count: cp }, { count: cs }, { count: ca }] = await Promise.all([
-        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-        sb.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved')
-      ]);
-      document.getElementById('cPending').textContent = cp || 0;
-      document.getElementById('cSent').textContent = cs || 0;
-      document.getElementById('cDone').textContent = ca || 0;
-
-      const { data: wds } = await sb.from('withdrawal_requests')
-        .select('*, users(full_name, email)').eq('status', TAB)
-        .order('created_at', { ascending: false }).limit(50);
-      const all = wds || [];
       const list = document.getElementById('list');
+      try {
+      const { counts, withdrawals } = await CniAdminApi.get('withdrawals', { status: TAB });
+      document.getElementById('cPending').textContent = counts.pending || 0;
+      document.getElementById('cSent').textContent = counts.sent || 0;
+      document.getElementById('cDone').textContent = counts.approved || 0;
+      const all = withdrawals || [];
       if (!all.length) { list.innerHTML = '<div class="adm-empty">No ' + TAB + ' withdrawals.</div>'; return; }
 
       list.innerHTML = all.map(w => `
         <div class="adm-card">
           <div class="adm-row-top">
             <div>
-              <div class="adm-name">${w.users?.full_name || 'User'}</div>
-              <div class="adm-sub">${w.users?.email || ''}<br>
-                💳 ${w.recipient_name} • ${w.recipient_mobile} • ${(w.operator || '').toUpperCase()}<br>
-                Requested ${CniAuth.timeAgo(w.created_at)}${w.pcmedia_sent_at ? '<br>🔗 Sent ' + CniAuth.timeAgo(w.pcmedia_sent_at) : ''}</div>
+              <div class="adm-name">${esc(w.users?.full_name || 'User')}</div>
+              <div class="adm-sub">${esc(w.users?.email || '')}<br>
+                💳 ${esc(w.recipient_name || '')} • ${esc(w.recipient_mobile || '')} • ${esc((w.operator || '').toUpperCase())}<br>
+                Requested ${esc(CniAuth.timeAgo(w.created_at))}${w.pcmedia_sent_at ? '<br>🔗 Sent ' + esc(CniAuth.timeAgo(w.pcmedia_sent_at)) : ''}</div>
             </div>
             <div style="text-align:right;">
               <div class="adm-amt red">${fmt(w.amount)}</div>
               <div class="adm-sub">Fee ${fmt(w.fee_amount)} • Pay <b style="color:var(--cni-green)">${fmt(w.net_amount)}</b></div>
-              <span class="chip ${w.status}">${w.status.toUpperCase()}</span>
+              <span class="chip ${['pending', 'sent', 'approved', 'rejected'].includes(w.status) ? w.status : 'pending'}">${esc(String(w.status || 'unknown').toUpperCase())}</span>
             </div>
           </div>
-          ${w.admin_note ? `<div class="adm-sub" style="margin-top:8px;">📝 ${w.admin_note}</div>` : ''}
+          ${w.admin_note ? `<div class="adm-sub" style="margin-top:8px;">📝 ${esc(w.admin_note)}</div>` : ''}
           ${TAB === 'pending' ? `
           <div class="adm-actions">
-            <button class="adm-btn warn" onclick="act('${w.id}','send')">🔗 Send to pcmedia</button>
-            <button class="adm-btn ok" onclick="act('${w.id}','approve')">✓ Approve</button>
-            <button class="adm-btn no" onclick="act('${w.id}','reject')">✕ Refund</button>
+            <button class="adm-btn warn" onclick="act(${jsArg(w.id)},'send')">🔗 Send to pcmedia</button>
+            <button class="adm-btn ok" onclick="act(${jsArg(w.id)},'approve')">✓ Approve</button>
+            <button class="adm-btn no" onclick="act(${jsArg(w.id)},'reject')">✕ Refund</button>
           </div>` : ''}
           ${TAB === 'sent' ? `
           <div class="adm-actions">
-            <button class="adm-btn ok" onclick="act('${w.id}','approve')">✓ Approve (paid)</button>
-            <button class="adm-btn warn" onclick="act('${w.id}','resend')">🔁 Resend</button>
-            <button class="adm-btn no" onclick="act('${w.id}','reject')">✕ Refund</button>
+            <button class="adm-btn ok" onclick="act(${jsArg(w.id)},'approve')">✓ Approve (paid)</button>
+            <button class="adm-btn warn" onclick="act(${jsArg(w.id)},'resend')">🔁 Resend</button>
+            <button class="adm-btn no" onclick="act(${jsArg(w.id)},'reject')">✕ Refund</button>
           </div>` : ''}
         </div>`).join('');
+      } catch (error) {
+        list.innerHTML = `<div class="adm-empty" role="alert">Could not load withdrawals: ${esc(error.message)}</div>`;
+        CniAuth.toast(error.message || 'Could not load withdrawals', 'error');
+      }
     }
 
     document.querySelector('.adm-tabs').addEventListener('click', e => {
