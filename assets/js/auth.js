@@ -7,7 +7,9 @@
     _ensured: false,
     _banChecked: false,
     _banned: false,
+    _toastTimer: null,
 
+    // ---------- SESSION ----------
     async getSession() {
       try {
         const { data, error } = await window.sb.auth.getSession();
@@ -25,11 +27,14 @@
       }
     },
 
+    // ---------- BAN ENFORCEMENT ----------
     async checkBan(session) {
       if (this._banChecked) return !this._banned;
       this._banChecked = true;
       try {
-        const { data } = await window.sb.from('users').select('is_banned, ban_reason').eq('id', session.user.id).single();
+        const { data } = await window.sb
+          .from('users').select('is_banned, ban_reason')
+          .eq('id', session.user.id).single();
         if (data && data.is_banned) {
           this._banned = true;
           this._showBanned(data.ban_reason);
@@ -55,6 +60,7 @@
       document.body.appendChild(d);
     },
 
+    // ---------- PROFILE / WALLET SELF-HEAL ----------
     async ensureProfile(session) {
       if (this._ensured) return;
       this._ensured = true;
@@ -64,14 +70,18 @@
         const code = 'CNI' + Math.random().toString(36).slice(2, 7).toUpperCase();
         const meta = session.user.user_metadata || {};
         const { error } = await window.sb.from('users').insert({
-          id: session.user.id, email: session.user.email,
-          full_name: meta.full_name || 'Member', phone: meta.phone || null, referral_code: code
+          id: session.user.id,
+          email: session.user.email || '',
+          full_name: meta.full_name || 'Member',
+          phone: meta.phone || null,
+          referral_code: code
         });
         if (error) throw error;
         await window.sb.from('wallets').insert({ user_id: session.user.id });
       } catch (e) { console.warn('[CNI] ensureProfile:', e.message); }
     },
 
+    // ---------- GUARDS ----------
     async requireAuth() {
       const session = await this.getSession();
       if (!session) {
@@ -89,40 +99,68 @@
       return s;
     },
 
+    // ---------- LOGIN ----------
     async login(email, password) {
       const { data, error } = await window.sb.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message || 'Login failed');
       try {
-        const { data: prof } = await window.sb.from('users').select('is_banned, ban_reason').eq('id', data.user.id).single();
+        const { data: prof } = await window.sb
+          .from('users').select('is_banned, ban_reason')
+          .eq('id', data.user.id).single();
         if (prof && prof.is_banned) {
           await window.sb.auth.signOut();
           throw new Error('Account suspended' + (prof.ban_reason ? ': ' + prof.ban_reason : ' — contact support'));
         }
       } catch (e) {
-        if (/Account suspended/.test(e.message)) throw e;
+        if (/Account suspended/.test(e.message || '')) throw e;
       }
       return data;
     },
 
+    // ---------- REGISTER (robust error extraction) ----------
     async register(full_name, email, phone, password, referral_code) {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ action: 'register', full_name, email, phone, password, referral_code })
-      });
+      let res;
+      try {
+        res = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ action: 'register', full_name, email, phone, password, referral_code })
+        });
+      } catch (e) {
+        console.error('[CNI] register network error:', e);
+        throw new Error('Network error — check your connection and retry');
+      }
+
       const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error — please try again');
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Registration failed');
+      if (!ct.includes('application/json')) {
+        console.error('[CNI] register non-JSON response:', res.status, ct);
+        throw new Error('Server error (HTTP ' + res.status + ') — please try again');
+      }
+
+      let data = {};
+      try { data = await res.json(); } catch (e) { data = {}; }
+
+      if (!res.ok || !data.ok) {
+        const e = data.error;
+        const msg = typeof e === 'string'
+          ? e
+          : (e?.message || e?.error_description || e?.msg || (e ? JSON.stringify(e) : '') || ('Registration failed (HTTP ' + res.status + ')'));
+        console.error('[CNI] register error payload:', data);
+        throw new Error(msg);
+      }
       return data;
     },
 
+    // ---------- LOGOUT ----------
     async logout(redirect = '/') {
-      this._ensured = false; this._banChecked = false; this._banned = false;
+      this._ensured = false;
+      this._banChecked = false;
+      this._banned = false;
       await window.sb.auth.signOut();
       window.location.href = redirect;
     },
 
+    // ---------- DATA HELPERS ----------
     async getProfile(uid) {
       const { data } = await window.sb.from('users').select('*').eq('id', uid).single();
       return data;
@@ -132,6 +170,7 @@
       return data;
     },
 
+    // ---------- FORMATTERS / UI ----------
     money(n) { return Number(n || 0).toLocaleString() + ' FCFA'; },
 
     timeAgo(dateStr) {
@@ -156,10 +195,11 @@
         toast.id = 'toast';
         document.body.appendChild(toast);
       }
-      toast.textContent = message;
+      const text = typeof message === 'string' ? message : (message?.message || JSON.stringify(message) || 'Done');
+      toast.textContent = text;
       toast.className = type === 'error' ? 'show err' : 'show';
       clearTimeout(this._toastTimer);
-      this._toastTimer = setTimeout(() => { toast.className = ''; }, 3000);
+      this._toastTimer = setTimeout(() => { toast.className = ''; }, 3500);
     }
   };
 
