@@ -15,6 +15,7 @@
       <h1 style="font-size:24px;">JOIN CALMTEL</h1>
       <div class="mut">Fast • Secure • Reliable</div>
     </div>
+
     <div class="card glow rise d2">
       <form id="regForm">
         <label class="lbl">Full Name</label>
@@ -31,6 +32,11 @@
       </form>
       <a class="btn ghost" style="margin-top:10px;" href="/">← Back to Login</a>
     </div>
+
+    <div class="mut rise d3" style="text-align:center;font-size:11px;line-height:1.7;margin-bottom:30px;">
+      By creating an account you agree to our fair-use policy.<br>
+      One account per person • referrals earn 30% commission.
+    </div>
   </div>
   <div id="toast"></div>
 
@@ -43,25 +49,36 @@
       const session = await CniAuth.getSession();
       if (session) { location.href = '/dashboard'; return; }
       CniUI.header(null);
+
+      // prefill referral code from ?ref=CNIXXXXX
       const ref = new URLSearchParams(location.search).get('ref');
       if (ref) document.getElementById('rRef').value = ref.toUpperCase();
 
       document.getElementById('regForm').addEventListener('submit', async e => {
         e.preventDefault();
         const btn = document.getElementById('rBtn');
+        const name = document.getElementById('rName').value.trim();
+        const email = document.getElementById('rEmail').value.trim().toLowerCase();
+        const phone = document.getElementById('rPhone').value.replace(/\s/g, '');
+        const pass = document.getElementById('rPass').value;
+        const refCode = document.getElementById('rRef').value.trim();
+
+        if (name.length < 3) return CniAuth.toast('Enter your full name', 'error');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return CniAuth.toast('Enter a valid email address', 'error');
+        if (phone.length < 9) return CniAuth.toast('Enter a valid phone number', 'error');
+        if (pass.length < 6) return CniAuth.toast('Password must be at least 6 characters', 'error');
+
         btn.disabled = true; btn.textContent = 'Creating…';
         try {
-          await CniAuth.register(
-            document.getElementById('rName').value.trim(),
-            document.getElementById('rEmail').value.trim().toLowerCase(),
-            document.getElementById('rPhone').value.replace(/\s/g, ''),
-            document.getElementById('rPass').value,
-            document.getElementById('rRef').value.trim()
-          );
-          CniAuth.toast('Account created — please login');
+          await CniAuth.register(name, email, phone, pass, refCode);
+          CniAuth.toast('🎉 Account created — please login');
           setTimeout(() => location.href = '/', 1200);
         } catch (err) {
-          CniAuth.toast(err.message, 'error');
+          console.error('[CNI] register failed:', err);
+          const msg = typeof err === 'string'
+            ? err
+            : (err?.message || (err ? JSON.stringify(err) : 'Registration failed'));
+          CniAuth.toast(msg, 'error');
           btn.disabled = false; btn.textContent = '🌐 Create Account';
         }
       });
