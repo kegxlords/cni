@@ -9,32 +9,54 @@
 </head>
 <body>
   <div id="app-header"></div>
+  
   <div class="wrap">
-    <div class="card glow rise d1">
-      <div class="sec" style="margin-top:0;">Deposit via Mobile Money</div>
-      <label class="lbl">Amount (FCFA)</label>
-      <div class="chips">
-        <button onclick="setAmt(2000)">2,000</button>
-        <button onclick="setAmt(5000)">5,000</button>
-        <button onclick="setAmt(10000)">10,000</button>
-        <button onclick="setAmt(20000)">20,000</button>
-        <button onclick="setAmt(50000)">50,000</button>
-      </div>
-      <input class="input" id="dAmt" type="number" min="500" placeholder="Min 500 FCFA" />
-      <label class="lbl">Network</label>
-      <select class="input" id="dOperator">
-        <option value="mtn">MTN Mobile Money</option>
-        <option value="orange">Orange Money</option>
-      </select>
-      <label class="lbl">Your MoMo Number</label>
-      <input class="input" id="dPhone" placeholder="2376XXXXXXXX" />
-      <button class="btn primary" id="dBtn">💳 Deposit Now</button>
-      <div class="mut" style="margin-top:8px;text-align:center;">You'll approve the payment on your phone</div>
+    <!-- Loading State -->
+    <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
+      🌐 Connecting to gateway...
     </div>
 
-    <div class="sec rise d2">Recent Deposits</div>
-    <div id="depList"></div>
+    <!-- Main Content -->
+    <div id="mainContent" style="display:none;">
+      
+      <!-- Deposit Form Card -->
+      <div class="card glow rise d1">
+        <div class="sec" style="margin-top:0;">💳 Deposit via Mobile Money</div>
+        
+        <label class="lbl">Amount (FCFA)</label>
+        <div class="chips">
+          <button onclick="setAmt(2000)">2,000</button>
+          <button onclick="setAmt(5000)">5,000</button>
+          <button onclick="setAmt(10000)">10,000</button>
+          <button onclick="setAmt(20000)">20,000</button>
+          <button onclick="setAmt(50000)">50,000</button>
+        </div>
+        <input class="input" id="dAmt" type="number" min="500" placeholder="Min 500 FCFA" />
+        
+        <label class="lbl">Network Operator</label>
+        <select class="input" id="dOperator">
+          <option value="mtn">MTN Mobile Money</option>
+          <option value="orange">Orange Money</option>
+        </select>
+        
+        <label class="lbl">Your MoMo Number</label>
+        <!-- User enters LOCAL format (starts with 6) -->
+        <input class="input" id="dPhone" placeholder="6XXXXXXXXX" maxlength="9" inputmode="numeric" pattern="[6][0-9]{8}" />
+        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter your number without country code (e.g. 678854784)</div>
+        
+        <button class="btn primary" id="dBtn">🚀 Initiate Deposit</button>
+        <div class="mut" style="margin-top:8px;text-align:center;font-size:11px;">
+          You will be redirected to approve payment on your phone.<br>
+          Funds credit automatically upon confirmation.
+        </div>
+      </div>
+
+      <!-- Recent Deposits List -->
+      <div class="sec rise d2">Recent Transactions</div>
+      <div id="depList"></div>
+    </div>
   </div>
+  
   <div id="app-footer"></div>
   <div id="toast"></div>
 
@@ -48,65 +70,179 @@
     const setAmt = v => document.getElementById('dAmt').value = v;
 
     document.addEventListener('DOMContentLoaded', async function () {
+      // 1. GET SESSION
       SESSION = await CniAuth.requireAuth();
       if (!SESSION) return;
-      const profile = await CniAuth.getProfile(SESSION.user.id);
-      CniUI.header(SESSION, profile);
-      CniUI.nav();
-      if (profile?.phone) document.getElementById('dPhone').value = profile.phone;
-      load();
+      
+      const uid = SESSION.user.id;
+      console.log('[DEPOSIT] Session loaded for:', uid);
 
-      document.getElementById('dBtn').addEventListener('click', async () => {
-        const amt = Number(document.getElementById('dAmt').value);
-        const mobile = document.getElementById('dPhone').value.replace(/\s/g, '');
-        if (!amt || amt < 500) return CniAuth.toast('Minimum deposit is 500 FCFA', 'error');
-        if (!/^237\d{9}$/.test(mobile)) return CniAuth.toast('Enter a valid 237... number', 'error');
-        const btn = document.getElementById('dBtn');
-        btn.disabled = true; btn.textContent = 'Opening gateway…';
-        try {
-          const res = await fetch('/api/payments/otpay', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-            body: JSON.stringify({ action: 'deposit-create', amount: amt, operator: document.getElementById('dOperator').value, mobile, country_code: 'CM' })
-          });
-          const d = await res.json();
-          if (!res.ok || !d.ok) throw new Error(d.error || 'Gateway error');
-          location.href = d.h5Url;
-        } catch (e) {
-          CniAuth.toast(e.message, 'error');
-          btn.disabled = false; btn.textContent = '💳 Deposit Now';
+      try {
+        // 2. FETCH PROFILE FOR PREFILL
+        const { data: profile } = await window.sb.from('users').select('*').eq('id', uid).single();
+        
+        // Render Header & Nav immediately
+        CniUI.header(SESSION, profile);
+        CniUI.nav();
+
+        // Prefill phone if available (strip 237 if stored globally)
+        if (profile?.phone) {
+          let p = String(profile.phone).replace(/\s/g, '');
+          if (p.startsWith('237')) p = p.slice(3); // Convert global -> local for display
+          if (/^6\d{8}$/.test(p)) document.getElementById('dPhone').value = p;
         }
-      });
+
+        // 3. LOAD RECENT DEPOSITS
+        loadHistory(uid);
+
+        // Show Content
+        document.getElementById('loadingState').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+
+        // 4. BIND SUBMIT HANDLER
+        document.getElementById('dBtn').addEventListener('click', handleDeposit);
+
+      } catch (err) {
+        console.error('[DEPOSIT] Init Error:', err);
+        document.getElementById('loadingState').innerHTML = 
+          `<div style="color:var(--cni-red);">❌ Failed to initialize deposit page.<br>${err.message}</div>`;
+      }
     });
 
-    async function load() {
-      const { data: deps } = await window.sb.from('payment_transactions')
-        .select('*').eq('user_id', SESSION.user.id).eq('kind', 'deposit')
-        .order('created_at', { ascending: false }).limit(8);
-      document.getElementById('depList').innerHTML = (deps || []).length ? (deps || []).map(t => `
-        <div class="card">
-          <div class="row">
-            <div class="grow">
-              <div class="name">${fmt(t.amount)}</div>
-              <div class="mut">${CniAuth.timeAgo(t.created_at)} • ${t.merchant_order_id}</div>
-            </div>
-            <div class="right">
-              <span class="chip ${t.status}">${t.status.toUpperCase()}</span>
-              ${t.status === 'pending' ? `<button class="btn sm ghost" style="margin-top:6px;" onclick="checkDep('${t.merchant_order_id}')">🔄</button>` : ''}
-            </div>
-          </div>
-        </div>`).join('') : '<div class="empty">No deposits yet.</div>';
+    async function handleDeposit() {
+      const amtInput = document.getElementById('dAmt');
+      const phoneInput = document.getElementById('dPhone');
+      const opSelect = document.getElementById('dOperator');
+      const btn = document.getElementById('dBtn');
+
+      const amount = Number(amtInput.value);
+      const localMobile = phoneInput.value.replace(/\s/g, '');
+      const operator = opSelect.value;
+
+      // --- VALIDATION (Strict Local CM Format: 6 followed by 8 digits) ---
+      if (!amount || amount < 500) {
+        return showToast('Minimum deposit is 500 FCFA', 'error');
+      }
+      if (!/^6\d{8}$/.test(localMobile)) {
+        return showToast('Enter a valid Cameroon MoMo number (e.g. 678854784)', 'error');
+      }
+
+      // Construct Full International Number for API/Gateway
+      const fullMobile = '237' + localMobile;
+
+      // Disable button during request
+      btn.disabled = true;
+      btn.textContent = '⏳ Opening Gateway...';
+
+      try {
+        // Call API (Sending FULL number so backend logic remains unchanged)
+        const res = await fetch('/api/payments/otpay', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Authorization': 'Bearer ' + SESSION.access_token 
+          },
+          body: JSON.stringify({ 
+            action: 'deposit-create', 
+            amount: amount, 
+            operator: operator, 
+            mobile: fullMobile 
+          })
+        });
+
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) throw new Error(`Server returned HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || 'Gateway rejected request');
+        }
+
+        // Success -> Redirect to H5 Checkout
+        showToast('✅ Redirecting to secure checkout...', 'success');
+        setTimeout(() => {
+          window.location.href = data.h5Url;
+        }, 800);
+
+      } catch (err) {
+        console.error('[DEPOSIT] Create Failed:', err);
+        showToast(err.message || 'Deposit failed. Please retry.', 'error');
+        btn.disabled = false;
+        btn.textContent = '🚀 Initiate Deposit';
+      }
     }
 
-    async function checkDep(id) {
-      const res = await fetch('/api/payments/otpay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-        body: JSON.stringify({ action: 'deposit-query', merchantOrderId: id })
-      });
-      const d = await res.json();
-      CniAuth.toast(d.ok ? 'Status: ' + d.status : d.error, d.ok && d.status === 'paid' ? 'success' : 'error');
-      load();
+    async function loadHistory(uid) {
+      const container = document.getElementById('depList');
+      try {
+        const { data: deps } = await window.sb.from('payment_transactions')
+          .select('*')
+          .eq('user_id', uid)
+          .eq('kind', 'deposit')
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (!deps || deps.length === 0) {
+          container.innerHTML = '<div class="empty">No deposits yet.</div>';
+          return;
+        }
+
+        container.innerHTML = deps.map(t => {
+          const statusClass = t.status === 'paid' ? 'approved' : t.status === 'pending' ? 'sent' : 'rejected';
+          const canCheck = t.status === 'pending';
+          
+          // Display logic: Strip 237 for cleaner UI if present in DB
+          let displayPhone = t.phone || '';
+          if (displayPhone.startsWith('237')) displayPhone = displayPhone.slice(3);
+
+          return `
+          <div class="card" style="padding:12px 14px;">
+            <div class="row">
+              <div class="grow">
+                <div class="name">${fmt(t.amount)}</div>
+                <div class="mut">${CniAuth.timeAgo(t.created_at)} • ${displayPhone} • Ref: ${(t.merchant_order_id || '').slice(-6)}</div>
+              </div>
+              <div class="right">
+                <span class="chip ${statusClass}">${t.status.toUpperCase()}</span>
+                ${canCheck ? `<br><button class="btn sm ghost" style="margin-top:6px;" onclick="checkStatus('${t.merchant_order_id}')">🔄 Check Status</button>` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+
+      } catch (e) {
+        console.error('[DEPOSIT] History Load Error:', e);
+        container.innerHTML = '<div class="empty">Could not load history.</div>';
+      }
+    }
+
+    async function checkStatus(orderId) {
+      showToast('Checking gateway status...', 'success');
+      try {
+        const res = await fetch('/api/payments/otpay', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json', 
+            'Authorization': 'Bearer ' + SESSION.access_token 
+          },
+          body: JSON.stringify({ action: 'deposit-query', merchantOrderId: orderId })
+        });
+        const data = await res.json();
+        
+        if (data.ok) {
+          showToast(`Status updated: ${data.status}`, data.status === 'paid' ? 'success' : 'error');
+          loadHistory(SESSION.user.id); // Refresh list
+        } else {
+          showToast(data.error || 'Query failed', 'error');
+        }
+      } catch (e) {
+        showToast('Network error checking status', 'error');
+      }
+    }
+
+    function showToast(msg, type) {
+      CniAuth.toast(msg, type);
     }
   </script>
 </body>
