@@ -43,8 +43,7 @@
         </div>
 
         <div class="mut" style="font-size:11px;margin-top:10px;text-align:center;">
-          Share either to earn <strong>30% commission</strong> on every deposit your friends make!
-        </div>
+          Share either to earn <strong><span class="dynamic-ref-pct">30%</span> commission</strong> on every deposit your friends make!        </div>
       </div>
 
       <!-- Downline List -->
@@ -60,12 +59,14 @@
   <script src="/assets/js/supabase.js"></script>
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
-  <script>
+  <!-- REPLACE THE ENTIRE <script> BLOCK IN team.html WITH THIS -->
+<script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
     let SESSION = null;
     let UID = null;
     let CODE = '';
     let LINK = '';
+    let REF_PCT = 30; // Default fallback
 
     document.addEventListener('DOMContentLoaded', async function () {
       // 1. GET SESSION
@@ -76,9 +77,20 @@
       console.log('[TEAM] Session loaded for:', UID);
 
       try {
-        // 2. FETCH PROFILE FOR HEADER (Self-Heal if missing)
-        const { data: profile } = await window.sb.from('users').select('*').eq('id', UID).single();
+        // 2. FETCH PROFILE & SETTINGS IN PARALLEL
+        const [profileRes, settingsRes] = await Promise.all([
+          window.sb.from('users').select('*').eq('id', UID).single(),
+          window.sb.from('platform_settings').select('referral_bonus_percent').eq('id', 1).single()
+        ]);
+
+        const profile = profileRes.data;
+        const s = settingsRes.data;
         
+        // Update global ref pct if found
+        if (s && s.referral_bonus_percent != null) {
+          REF_PCT = Number(s.referral_bonus_percent);
+        }
+
         // Render Header & Nav immediately
         CniUI.header(SESSION, profile);
         CniUI.nav();
@@ -95,7 +107,6 @@
         CODE = teamData.referral_code || 'N/A';
         LINK = location.origin + '/register?ref=' + CODE;
         
-        // FIX: Only target elements that actually exist in DOM
         const codeEl = document.getElementById('refCodeInput');
         const linkEl = document.getElementById('refLinkInput');
         
@@ -105,6 +116,9 @@
         document.getElementById('tMembers').textContent = teamData.total_downlines || 0;
         document.getElementById('tActive').textContent = teamData.active_downlines || 0;
         document.getElementById('tEarn').textContent = Number(teamData.referral_earnings || 0).toLocaleString();
+
+        // UPDATE LABELS DYNAMICALLY
+        document.querySelectorAll('.dynamic-ref-pct').forEach(el => el.textContent = REF_PCT + '%');
 
         // Render Member Cards
         const members = teamData.members || [];
@@ -179,6 +193,6 @@
     function showToast(msg, type) {
       CniAuth.toast(msg, type);
     }
-  </script>
+</script>
 </body>
 </html>
