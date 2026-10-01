@@ -27,32 +27,66 @@ const log = (t, m, d) => console.log(`[${new Date().toISOString()}] [${t}] ${m}$
 const safe200 = (res, msg) => res.status(200).json({ ok: true, msg });
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// ---------- CREDIT DEPOSIT ----------
+// ---------- CREDIT DEPOSIT (wallet auto-create + dynamic referral bonus) ----------
 async function creditDeposit({ supabase, user_id, amount, provider_ref, description }) {
   let { data: wallet, error } = await supabase.from('wallets').select('*').eq('user_id', user_id).maybeSingle();
+  
   if (error || !wallet) {
-    const { data: nw, error: ie } = await supabase.from('wallets').insert({ user_id, balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0, updated_at: new Date().toISOString() }).select().single();
+    const { data: nw, error: ie } = await supabase.from('wallets').insert({ 
+      user_id, balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0, updated_at: new Date().toISOString() 
+    }).select().single();
     if (ie) throw new Error('Failed to create wallet: ' + ie.message);
     wallet = nw;
   }
+
   const amt = Number(amount);
   const nb = Number(wallet.balance) + amt;
-  await supabase.from('wallets').update({ balance: nb, total_deposit: Number(wallet.total_deposit || 0) + amt, updated_at: new Date().toISOString() }).eq('user_id', user_id);
-  await supabase.from('wallet_transactions').insert({ user_id, type: 'deposit', amount: amt, description, balance_after: nb });
+  
+  // Update depositor wallet
+  await supabase.from('wallets').update({ 
+    balance: nb, 
+    total_deposit: Number(wallet.total_deposit || 0) + amt, 
+    updated_at: new Date().toISOString() 
+  }).eq('user_id', user_id);
+  
+  await supabase.from('wallet_transactions').insert({ 
+    user_id, type: 'deposit', amount: amt, description, balance_after: nb 
+  });
+
+  // 🎯 DYNAMIC REFERRAL CALCULATION
   const { data: st } = await supabase.from('platform_settings').select('referral_bonus_percent').eq('id', 1).single();
-  const pct = Number(st?.referral_bonus_percent ?? 30);
+  // Use admin setting, fallback to 30 ONLY IF setting is missing/null
+  const pct = Number(st?.referral_bonus_percent ?? 30); 
+  
   const { data: user } = await supabase.from('users').select('referred_by').eq('id', user_id).single();
-  if (user?.referred_by) {
+  
+  if (user?.referred_by && pct > 0) {
     const comm = Math.round(amt * pct / 100);
+    
+    // Credit Referrer Wallet
     const { data: rw } = await supabase.from('wallets').select('*').eq('user_id', user.referred_by).single();
     if (rw) {
       const rb = Number(rw.balance) + comm;
-      await supabase.from('wallets').update({ balance: rb, total_referral_earnings: Number(rw.total_referral_earnings || 0) + comm, updated_at: new Date().toISOString() }).eq('user_id', user.referred_by);
-      await supabase.from('wallet_transactions').insert({ user_id: user.referred_by, type: 'referral_bonus', amount: comm, description: pct + '% commission on downline deposit [' + user_id + ']', balance_after: rb });
+      await supabase.from('wallets').update({ 
+        balance: rb, 
+        total_referral_earnings: Number(rw.total_referral_earnings || 0) + comm, 
+        updated_at: new Date().toISOString() 
+      }).eq('user_id', user.referred_by);
+      
+      await supabase.from('wallet_transactions').insert({ 
+        user_id: user.referred_by, 
+        type: 'referral_bonus', 
+        amount: comm, 
+        description: `${pct}% commission on downline deposit [${user_id}]`, 
+        balance_after: rb 
+      });
+      
+      console.log(`[CNI-REFERRAL] Credited ${comm} FCFA (${pct}%) to ${user.referred_by}`);
     }
   }
+  
   return { newBalance: nb };
-}
+    }
 
 // ---------- OTPay DEPOSIT ----------
 async function handleDeposit(supabase, body, eventKey) {
