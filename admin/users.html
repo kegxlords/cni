@@ -71,11 +71,23 @@
       CniAuth.toast('Admin status updated');
       load();
     }
-    function viewUser(uid) {
+    async function viewUser(uid, button) {
       const u = USERS.find(x => x.id === uid);
       if (!u) return CniAuth.toast('Could not find this user', 'error');
-      CniAuth.startImpersonation(uid, u.full_name || u.email || 'Member')
-        .catch(error => CniAuth.toast(error.message || 'Could not start impersonation', 'error'));
+      if (!window.CniAuth || typeof CniAuth.startImpersonation !== 'function') {
+        const message = 'Impersonation support is not deployed. Install the updated assets/js/auth.js, api/admin/impersonate.js, and audit migration from the full bundle.';
+        if (window.CniAuth?.toast) CniAuth.toast(message, 'error');
+        else window.alert(message);
+        return;
+      }
+      if (button) { button.disabled = true; button.textContent = 'Starting…'; }
+      try {
+        const started = await CniAuth.startImpersonation(uid, u.full_name || u.email || 'Member');
+        if (started === false && button) { button.disabled = false; button.textContent = 'View User'; }
+      } catch (error) {
+        if (button) { button.disabled = false; button.textContent = 'View User'; }
+        CniAuth.toast(error.message || 'Could not start impersonation', 'error');
+      }
     }
 
     function render() {
@@ -95,7 +107,7 @@
             </div>
           </div>
           <div class="adm-actions">
-            <button class="adm-btn warn" type="button" ${u.is_admin || u.is_banned ? 'disabled title="Admin or banned users cannot be impersonated"' : ''} onclick="viewUser(${jsArg(u.id)})">View User</button>
+            <button class="adm-btn warn" type="button" ${u.is_admin || u.is_banned ? 'disabled title="Admin or banned users cannot be impersonated"' : ''} onclick="viewUser(${jsArg(u.id)}, this)">View User</button>
             ${u.is_banned
               ? `<button class="adm-btn ok" onclick="unbanUser(${jsArg(u.id)})">✅ Unban</button>`
               : `<button class="adm-btn no" onclick="banUser(${jsArg(u.id)})">🚫 Ban</button>`}
