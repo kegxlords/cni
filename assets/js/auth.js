@@ -152,8 +152,17 @@
     // ---------- ADMIN IMPERSONATION ----------
     async startImpersonation(targetUserId, targetName) {
       if (window.CNI_IMPERSONATION_STATE) throw new Error('An impersonation session is already active');
-      if (!window.CNI_SUPABASE_URL || !window.CNI_SUPABASE_ANON_KEY || !window.supabase?.createClient) {
-        throw new Error('Impersonation client is not available');
+      // Newer supabase.js builds publish CNI_* globals; older deployed builds
+      // still expose the same URL/key on the already-created Supabase client.
+      const supabaseUrl = window.CNI_SUPABASE_URL || window.sb?.supabaseUrl;
+      const supabaseAnonKey = window.CNI_SUPABASE_ANON_KEY || window.sb?.supabaseKey;
+      const supabaseSdk = window.supabase || window.supabaseJs;
+      const missing = [];
+      if (!supabaseUrl) missing.push('Supabase project URL');
+      if (!supabaseAnonKey) missing.push('Supabase anon key');
+      if (typeof supabaseSdk?.createClient !== 'function') missing.push('Supabase JS client');
+      if (missing.length) {
+        throw new Error(`Impersonation client unavailable: missing ${missing.join(', ')}. Update assets/js/supabase.js and assets/js/auth.js together.`);
       }
       if (!window.confirm(`Start a 30-minute full impersonation of ${targetName || 'this user'}? All actions will be performed as that user.`)) return false;
 
@@ -168,7 +177,7 @@
           action: 'start', target_user_id: targetUserId
         });
         window.sessionStorage.removeItem(IMPERSONATION_AUTH_STORAGE_KEY);
-        targetClient = window.supabase.createClient(window.CNI_SUPABASE_URL, window.CNI_SUPABASE_ANON_KEY, {
+        targetClient = supabaseSdk.createClient(supabaseUrl, supabaseAnonKey, {
           auth: {
             storage: window.sessionStorage,
             storageKey: IMPERSONATION_AUTH_STORAGE_KEY,
