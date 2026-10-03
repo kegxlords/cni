@@ -70,8 +70,10 @@
         <input class="input" id="wName" placeholder="Full name on MoMo account" />
         
         <label class="lbl">Recipient MoMo Number</label>
-        <input class="input" id="wMobile" placeholder="6XXXXXXXXX" maxlength="9" inputmode="numeric" pattern="[6][0-9]{8}" />
-        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter number starting with 6 (e.g. 678854784)</div>
+<!-- REMOVED maxlength attribute to prevent iOS space bug -->
+<input class="input" id="wMobile" placeholder="6XXXXXXXXX" inputmode="numeric" autocomplete="off" 
+       oninput="sanitizePhone(this)" />
+<div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter number starting with 6 (e.g. 678854784)</div>
         
         <label class="lbl">Network Operator</label>
         <select class="input" id="wOperator">
@@ -107,6 +109,19 @@
     let MIN_WD = 1500;
     let TIMER_INTERVAL = null;
 
+    // Sanitize phone input: remove all non-digits, enforce max 9 chars
+function sanitizePhone(el) {
+  let val = el.value.replace(/\D/g, ''); // Strip everything except numbers
+  
+  // Limit to 9 digits strictly
+  if (val.length > 9) {
+    val = val.slice(0, 9);
+  }
+  
+  // Update value without triggering cursor jump issues where possible
+  el.value = val;
+                    }
+    
     // --- WEST AFRICA TIME (GMT+1) CALCULATION ---
     function getWATNow() {
       // Get current UTC time and add 1 hour to simulate WAT without relying on device timezone
