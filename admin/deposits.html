@@ -4,25 +4,52 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0033CC" />
-  <title>Admin Deposits - Calmtel</title>
+  <title>Admin Deposits - Calmtel Network International</title>
   <link rel="stylesheet" href="/assets/css/cni.css" />
+  <style>
+    /* Tab Styles */
+    .adm-tabs { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--cni-line); padding-bottom:0; }
+    .adm-tab { 
+      padding:10px 20px; font-weight:700; color:var(--cni-mut); cursor:pointer; 
+      border-radius:10px 10px 0 0; transition:all .2s ease; background:transparent; border:none; font-size:13px;
+    }
+    .adm-tab.on { 
+      background:rgba(53,199,255,.1); color:var(--cni-cyan); 
+      box-shadow:inset 0 -2px 0 var(--cni-cyan); 
+    }
+    
+    /* Copy Badge Style */
+    .trace-id-badge {
+      display:inline-flex; align-items:center; justify-content:center;
+      background:rgba(255,255,255,.05); border:1px dashed rgba(255,255,255,.2);
+      padding:4px 8px; border-radius:6px; font-family:'Courier New', monospace;
+      font-size:11px; color:#fff; margin-top:6px; cursor:pointer; transition:background .2s;
+    }
+    .trace-id-badge:hover { background:rgba(53,199,255,.15); border-color:var(--cni-cyan); }
+    .trace-id-badge span { opacity:.6; font-size:9px; margin-right:4px; text-transform:uppercase; letter-spacing:.5px; }
+  </style>
 </head>
 <body>
   <div id="app-header"></div>
   <div class="adm-wrap">
     <div id="adm-nav"></div>
-    <h2 class="adm-title">Deposits</h2>
+    <h2 class="adm-title">Deposit Management</h2>
 
+    <!-- Stats Row -->
     <div class="adm-stats">
-      <div class="adm-stat"><b id="dPending">0</b><span>Pending</span></div>
-      <div class="adm-stat"><b id="dPaid24">0</b><span>Paid 24h</span></div>
-      <div class="adm-stat"><b id="dVol24">0</b><span>Volume 24h</span></div>
+      <div class="adm-stat"><b id="dPendingCount">0</b><span>Pending Orders</span></div>
+      <div class="adm-stat"><b id="dPaidCount">0</b><span>Paid Today</span></div>
+      <div class="adm-stat"><b id="dVolToday">0</b><span>Volume (FCFA)</span></div>
     </div>
 
-    <div class="adm-title" style="font-size:15px;">Pending Orders</div>
-    <div id="pendList"></div>
-    <div class="adm-title" style="font-size:15px;">Recent Settled</div>
-    <div id="settledList"></div>
+    <!-- Tabs -->
+    <div class="adm-tabs">
+      <button class="adm-tab on" data-t="pending">⏳ Pending Verification</button>
+      <button class="adm-tab" data-t="paid">✅ Completed Deposits</button>
+    </div>
+
+    <!-- Lists Container -->
+    <div id="listContainer"></div>
   </div>
   <div id="toast"></div>
 
@@ -30,84 +57,163 @@
   <script src="/assets/js/supabase.js"></script>
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
-  <script src="/assets/js/admin-api.js"></script>
   <script>
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
-    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
-    const jsArg = value => esc(JSON.stringify(String(value ?? '')));
     let SESSION = null;
-
-    async function depAct(action, id) {
-      const msgs = {
-        'admin-deposit-verify': 'Query gateway and credit if paid?',
-        'admin-deposit-credit': 'FORCE credit this deposit without gateway check?',
-        'admin-deposit-fail': 'Mark this deposit as FAILED?'
-      };
-      if (!confirm(msgs[action])) return;
-      const res = await fetch('/api/payments/otpay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-        body: JSON.stringify({ action, merchantOrderId: id })
-      });
-      const d = await res.json();
-      CniAuth.toast(d.message || d.error, d.ok ? 'success' : 'error');
-      load();
-    }
-
-    async function load() {
-      try {
-      const { pending: pend, pendingCount: cp, paid24, settled } = await CniAdminApi.get('deposits');
-      document.getElementById('dPending').textContent = cp || 0;
-      document.getElementById('dPaid24').textContent = (paid24 || []).length;
-      document.getElementById('dVol24').textContent = ((paid24 || []).reduce((s, t) => s + Number(t.amount || 0), 0) / 1000).toFixed(0) + 'k';
-
-      document.getElementById('pendList').innerHTML = (pend || []).length ? (pend || []).map(t => `
-        <div class="adm-card">
-          <div class="adm-row-top">
-            <div>
-              <div class="adm-name">${esc(t.users?.full_name || 'User')}</div>
-              <div class="adm-sub">${esc(t.users?.email || '')}<br>${esc(t.merchant_order_id || '')}<br>${esc(CniAuth.timeAgo(t.created_at))} • ${esc(t.phone || '')}</div>
-            </div>
-            <div style="text-align:right;">
-              <div class="adm-amt">${fmt(t.amount)}</div>
-              <span class="chip pending">PENDING</span>
-            </div>
-          </div>
-          <div class="adm-actions">
-            <button class="adm-btn ok" onclick="depAct('admin-deposit-verify',${jsArg(t.merchant_order_id)})">🔄 Verify & Credit</button>
-            <button class="adm-btn warn" onclick="depAct('admin-deposit-credit',${jsArg(t.merchant_order_id)})">💳 Force</button>
-            <button class="adm-btn no" onclick="depAct('admin-deposit-fail',${jsArg(t.merchant_order_id)})">✕ Fail</button>
-          </div>
-        </div>`).join('') : '<div class="adm-empty">No pending deposits. 🎉</div>';
-
-      document.getElementById('settledList').innerHTML = (settled || []).length ? (settled || []).map(t => `
-        <div class="adm-card" style="padding:12px 14px;">
-          <div class="adm-row-top">
-            <div>
-              <div class="adm-name" style="font-size:13px;">${esc(t.users?.full_name || 'User')}</div>
-              <div class="adm-sub">${esc(CniAuth.timeAgo(t.created_at))}</div>
-            </div>
-            <div style="text-align:right;">
-              <div class="adm-amt" style="font-size:14px;">${fmt(t.amount)}</div>
-              <span class="chip ${['paid', 'failed', 'refunded'].includes(t.status) ? t.status : 'failed'}">${esc(String(t.status || 'unknown').toUpperCase())}</span>
-            </div>
-          </div>
-        </div>`).join('') : '<div class="adm-empty">Nothing settled yet.</div>';
-      } catch (error) {
-        document.getElementById('pendList').innerHTML = `<div class="adm-empty" role="alert">Could not load deposits: ${esc(error.message)}</div>`;
-        document.getElementById('settledList').innerHTML = '';
-        CniAuth.toast(error.message || 'Could not load deposits', 'error');
-      }
-    }
+    let CURRENT_TAB = 'pending'; // Default view
 
     document.addEventListener('DOMContentLoaded', async function () {
       SESSION = await CniAuth.adminGuard();
       if (!SESSION) return;
+      
       const profile = await CniAuth.getProfile(SESSION.user.id);
       CniUI.header(SESSION, profile);
       CniUI.adminNav('deposits');
-      load();
+
+      // Bind Tab Clicks
+      document.querySelector('.adm-tabs').addEventListener('click', e => {
+        const btn = e.target.closest('.adm-tab');
+        if (!btn) return;
+        
+        // Visual Toggle
+        document.querySelectorAll('.adm-tab').forEach(t => t.classList.remove('on'));
+        btn.classList.add('on');
+        
+        // Logic Toggle
+        CURRENT_TAB = btn.dataset.t;
+        loadList(CURRENT_TAB);
+      });
+
+      // Initial Load
+      updateStats();
+      loadList(CURRENT_TAB);
     });
+
+    async function updateStats() {
+      const sb = window.sb;
+      const sod = new Date(); sod.setHours(0,0,0,0);
+      
+      const [{ count: p }, { count: pd }, { data: vol }] = await Promise.all([
+        sb.from('payment_transactions').select('*', { count: 'exact', head: true }).eq('kind','deposit').eq('status','pending'),
+        sb.from('payment_transactions').select('*', { count: 'exact', head: true }).eq('kind','deposit').eq('status','paid').gte('created_at', sod.toISOString()),
+        sb.from('payment_transactions').select('amount').eq('kind','deposit').eq('status','paid').gte('created_at', sod.toISOString())
+      ]);
+
+      document.getElementById('dPendingCount').textContent = p || 0;
+      document.getElementById('dPaidCount').textContent = pd || 0;
+      document.getElementById('dVolToday').textContent = ((vol||[]).reduce((s,t)=>s+Number(t.amount),0)/1000).toFixed(1)+'k';
+    }
+
+    async function loadList(tabType) {
+      const container = document.getElementById('listContainer');
+      container.innerHTML = '<div class="empty">Loading...</div>';
+
+      try {
+        const query = window.sb.from('payment_transactions')
+          .select('*, users(full_name, email)')
+          .eq('kind', 'deposit')
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (tabType === 'pending') query.eq('status', 'pending');
+        else if (tabType === 'paid') query.eq('status', 'paid');
+
+        const { data: txs } = await query;
+
+        if (!txs || txs.length === 0) {
+          container.innerHTML = `<div class="empty">No ${tabType} deposits found.</div>`;
+          return;
+        }
+
+        container.innerHTML = txs.map(t => {
+          // Common Elements
+          const userDisplay = t.users?.full_name || 'Unknown User';
+          const userEmail = t.users?.email || '';
+          const dateStr = new Date(t.created_at).toLocaleString();
+          
+          // Specific Rendering based on Tab
+          if (tabType === 'pending') {
+            return `
+            <div class="adm-card" style="border-left:3px solid orange;">
+              <div class="adm-row-top">
+                <div>
+                  <div class="adm-name">${userDisplay}</div>
+                  <div class="adm-sub">${userEmail}<br>${dateStr}</div>
+                  
+                  <!-- TRACE ID BADGE (Clickable to Copy) -->
+                  <div class="trace-id-badge" onclick="copyTrace('${t.merchant_order_id}')">
+                    <span>ID:</span> ${t.merchant_order_id}
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <div class="adm-amt gold">${fmt(t.amount)}</div>
+                  <span class="chip pending">PENDING</span>
+                </div>
+              </div>
+              
+              <div class="adm-actions" style="margin-top:12px;">
+                <button class="adm-btn ok" onclick="depAct('admin-deposit-verify','${t.merchant_order_id}')">🔄 Verify Gateway & Credit</button>
+                <button class="adm-btn warn" onclick="depAct('admin-deposit-credit','${t.merchant_order_id}')">💳 Force Credit</button>
+                <button class="adm-btn no" onclick="depAct('admin-deposit-fail','${t.merchant_order_id}')">✕ Mark Failed</button>
+              </div>
+            </div>`;
+          } else {
+            // PAID VIEW (Simpler read-only summary)
+            return `
+            <div class="adm-card" style="opacity:.85;">
+              <div class="adm-row-top">
+                <div>
+                  <div class="adm-name">${userDisplay}</div>
+                  <div class="adm-sub">${userEmail} • Ref: ${(t.provider_order_id||'N/A').slice(-6)}<br>${dateStr}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div class="adm-amt green">${fmt(t.amount)}</div>
+                  <span class="chip approved">PAID</span>
+                </div>
+              </div>
+            </div>`;
+          }
+        }).join('');
+
+      } catch (e) {
+        console.error('[ADMIN DEP] Load Error:', e);
+        container.innerHTML = `<div class="empty" style="color:red;">Error loading list: ${e.message}</div>`;
+      }
+    }
+
+    // --- ACTIONS ---
+    async function depAct(action, orderId) {
+      const msgs = {
+        'admin-deposit-verify': 'Query gateway status and credit if paid?',
+        'admin-deposit-credit': 'FORCE credit this deposit without checking gateway?',
+        'admin-deposit-fail': 'Mark this deposit as FAILED permanently?'
+      };
+      if (!confirm(msgs[action])) return;
+
+      const res = await fetch('/api/payments/otpay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+        body: JSON.stringify({ action, merchantOrderId: orderId })
+      });
+      
+      const d = await res.json();
+      CniAuth.toast(d.ok ? (d.message || 'Success') : d.error, d.ok ? 'success' : 'error');
+      
+      // Refresh current view
+      loadList(CURRENT_TAB);
+      updateStats();
+    }
+
+    function copyTrace(id) {
+      navigator.clipboard.writeText(id).then(() => {
+        CniAuth.toast('✅ Order ID copied for tracing!', 'success');
+      }).catch(() => {
+        // Fallback selection
+        const el = document.createElement('textarea');
+        el.value = id; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
+        CniAuth.toast('✅ Copied manually!', 'success');
+      });
+    }
   </script>
 </body>
 </html>
