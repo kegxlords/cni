@@ -6,6 +6,28 @@
   <meta name="theme-color" content="#0033CC" />
   <title>Withdraw - Calmtel Network International</title>
   <link rel="stylesheet" href="/assets/css/cni.css" />
+  <style>
+    /* Lock Overlay Styles */
+    .wd-lock-overlay {
+      position: absolute; inset: 0; z-index: 10;
+      background: rgba(2, 11, 31, 0.92); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      border-radius: inherit; padding: 20px; text-align: center;
+    }
+    .wd-lock-box { max-width: 320px; }
+    .wd-lock-icon { font-size: 48px; margin-bottom: 10px; animation: pulseLock 2s infinite; }
+    @keyframes pulseLock { 0%,100%{opacity:.6} 50%{opacity:1} }
+    .wd-countdown { 
+      font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 28px; 
+      color: var(--cni-cyan); letter-spacing: 2px; margin: 12px 0; 
+      text-shadow: 0 0 15px rgba(53,199,255,.5);
+    }
+    .wd-window-info { 
+      font-size: 11px; color: var(--cni-mut); line-height: 1.6; 
+      background: rgba(255,255,255,.04); padding: 10px; border-radius: 10px; margin-top: 10px;
+    }
+    .form-disabled { opacity: 0.5; pointer-events: none; filter: grayscale(0.8); }
+  </style>
 </head>
 <body>
   <div id="app-header"></div>
@@ -13,7 +35,7 @@
   <div class="wrap">
     <!-- Loading State -->
     <div id="loadingState" style="text-align:center;padding:40px;color:var(--cni-mut);">
-      💸 Loading withdrawal options...
+      💸 Checking withdrawal availability...
     </div>
 
     <!-- Main Content -->
@@ -27,8 +49,12 @@
         </div>
       </div>
 
-      <!-- Withdrawal Form Card -->
-      <div class="card rise d2">
+      <!-- Withdrawal Form Card (Relative Position for Overlay) -->
+      <div class="card rise d2" style="position:relative;">
+        
+        <!-- 🔒 TIME LOCK OVERLAY (Injected via JS when closed) -->
+        <div id="timeLockOverlay"></div>
+
         <div class="sec" style="margin-top:0;">Request Withdrawal</div>
         
         <label class="lbl">Amount (FCFA)</label>
@@ -44,7 +70,6 @@
         <input class="input" id="wName" placeholder="Full name on MoMo account" />
         
         <label class="lbl">Recipient MoMo Number</label>
-        <!-- Local format input (starts with 6) -->
         <input class="input" id="wMobile" placeholder="6XXXXXXXXX" maxlength="9" inputmode="numeric" pattern="[6][0-9]{8}" />
         <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter number starting with 6 (e.g. 678854784)</div>
         
@@ -56,7 +81,7 @@
         
         <button class="btn primary" id="wBtn">💸 Request Withdrawal</button>
         <div class="mut" style="margin-top:8px;text-align:center;font-size:11px;">
-          Unlimited requests • Processed by our payment partner.<br>
+          Window: <strong>10:00 AM – 5:00 PM WAT</strong> • Unlimited requests<br>
           Minimum: <span id="lblMinWd">1,500</span> FCFA
         </div>
       </div>
@@ -78,8 +103,91 @@
     const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
     let SESSION = null;
     let UID = null;
-    let FEE_PCT = 8; // Default fallback
-    let MIN_WD = 1500; // Default fallback
+    let FEE_PCT = 8;
+    let MIN_WD = 1500;
+    let TIMER_INTERVAL = null;
+
+    // --- WEST AFRICA TIME (GMT+1) CALCULATION ---
+    function getWATNow() {
+      // Get current UTC time and add 1 hour to simulate WAT without relying on device timezone
+      const now = new Date();
+      const utcHours = now.getUTCHours();
+      const utcMinutes = now.getUTCMinutes();
+      const watHours = (utcHours + 1) % 24;
+      return { hours: watHours, minutes: utcMinutes };
+    }
+
+    function isWithinWindow() {
+      const { hours, minutes } = getWATNow();
+      // Open at 10:00, Close strictly before 17:00 (so 16:59 is last valid minute)
+      if (hours >= 10 && hours < 17) return true;
+      return false;
+    }
+
+    function getNextOpenTime() {
+      const { hours, minutes } = getWATNow();
+      let targetH = 10, targetM = 0, dayOffset = 0;
+
+      if (hours < 10) {
+        // Today 10 AM
+        targetH = 10; targetM = 0; dayOffset = 0;
+      } else if (hours >= 17) {
+        // Tomorrow 10 AM
+        targetH = 10; targetM = 0; dayOffset = 1;
+      }
+      
+      const nowDate = new Date();
+      const targetDate = new Date(nowDate.getTime() + (dayOffset * 24 * 60 * 60 * 1000));
+      targetDate.setUTCHours(targetH - 1, targetM, 0, 0); // Subtract 1 because we added 1 earlier for WAT calc
+      
+      const diffMs = targetDate.getTime() - nowDate.getTime();
+      return Math.max(0, diffMs);
+    }
+
+    function formatCountdown(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    }
+
+    function updateLockUI() {
+      const overlay = document.getElementById('timeLockOverlay');
+      const formCard = overlay.parentElement;
+      const btn = document.getElementById('wBtn');
+      
+      if (isWithinWindow()) {
+        // OPEN STATE
+        if (overlay.innerHTML !== '') overlay.innerHTML = '';
+        formCard.classList.remove('form-disabled');
+        btn.disabled = false;
+        btn.textContent = '💸 Request Withdrawal';
+        clearInterval(TIMER_INTERVAL);
+      } else {
+        // CLOSED STATE
+        const msLeft = getNextOpenTime();
+        const cdStr = formatCountdown(msLeft);
+        
+        overlay.innerHTML = `
+          <div class="wd-lock-overlay">
+            <div class="wd-lock-box">
+              <div class="wd-lock-icon">⏳</div>
+              <div class="name" style="color:#fff;">Withdrawals Paused</div>
+              <div class="mut" style="margin:6px 0;">Next available slot opens in:</div>
+              <div class="wd-countdown">${cdStr}</div>
+              <div class="wd-window-info">
+                Operating Hours:<br><strong>10:00 AM – 5:00 PM WAT</strong><br>(Mon – Sun)<br>
+                Please wait or deposit funds meanwhile.
+              </div>
+            </div>
+          </div>`;
+          
+        formCard.classList.add('form-disabled');
+        btn.disabled = true;
+        btn.textContent = '🔒 Locked Until 10AM';
+      }
+    }
 
     function summary() {
       const a = Number(document.getElementById('wAmt').value || 0);
@@ -97,7 +205,7 @@
       console.log('[WITHDRAW] Session loaded for:', UID);
 
       try {
-        // 2. FETCH PROFILE & WALLET IN PARALLEL USING .maybeSingle()
+        // 2. FETCH PROFILE & WALLET & SETTINGS IN PARALLEL
         const [profileRes, walletRes, settingsRes] = await Promise.all([
           window.sb.from('users').select('*').eq('id', UID).maybeSingle(),
           window.sb.from('wallets').select('*').eq('user_id', UID).maybeSingle(),
@@ -114,12 +222,8 @@
           const meta = SESSION.user.user_metadata || {};
           
           const { data: newProf, error: profErr } = await window.sb.from('users').insert({
-            id: UID, 
-            email: SESSION.user.email, 
-            full_name: meta.full_name || 'Member',
-            phone: meta.phone || null, 
-            referral_code: code,
-            vip_level: 0, is_admin: false, is_banned: false
+            id: UID, email: SESSION.user.email, full_name: meta.full_name || 'Member',
+            phone: meta.phone || null, referral_code: code, vip_level: 0, is_admin: false, is_banned: false
           }).select().single();
 
           if (profErr) throw new Error('Failed to create profile: ' + profErr.message);
@@ -128,10 +232,8 @@
 
         if (!wallet) {
           console.warn('[WITHDRAW] Wallet row missing! Creating...');
-          
           const { data: newWal, error: walErr } = await window.sb.from('wallets').insert({
-            user_id: UID, 
-            balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0
+            user_id: UID, balance: 0, total_deposit: 0, total_profit: 0, total_referral_earnings: 0
           }).select().single();
 
           if (walErr) throw new Error('Failed to create wallet: ' + walErr.message);
@@ -155,11 +257,11 @@
         // 4. UPDATE BALANCE DISPLAY
         document.getElementById('balAmt').textContent = fmt(wallet.balance);
 
-        // Prefill recipient info if available
+        // Prefill recipient info
         if (profile?.full_name) document.getElementById('wName').value = profile.full_name;
         if (profile?.phone) {
           let p = String(profile.phone).replace(/\s/g, '');
-          if (p.startsWith('237')) p = p.slice(3); // Convert global -> local for display
+          if (p.startsWith('237')) p = p.slice(3);
           if (/^6\d{8}$/.test(p)) document.getElementById('wMobile').value = p;
         }
 
@@ -170,7 +272,11 @@
         document.getElementById('loadingState').style.display = 'none';
         document.getElementById('mainContent').style.display = 'block';
 
-        // 6. BIND SUBMIT HANDLER
+        // 6. INIT TIME CHECKER LOOP
+        updateLockUI(); // Initial check
+        TIMER_INTERVAL = setInterval(updateLockUI, 1000); // Update every second
+
+        // 7. BIND SUBMIT HANDLER
         document.getElementById('wBtn').addEventListener('click', handleWithdraw);
 
       } catch (err) {
@@ -181,6 +287,11 @@
     });
 
     async function handleWithdraw() {
+      // Double-check time gate client-side just in case race condition occurs
+      if (!isWithinWindow()) {
+        return showToast('Withdrawals are only open between 10:00 AM and 5:00 PM WAT.', 'error');
+      }
+
       const amtInput = document.getElementById('wAmt');
       const nameInput = document.getElementById('wName');
       const mobileInput = document.getElementById('wMobile');
@@ -203,10 +314,8 @@
         return showToast('Enter a valid Cameroon MoMo number (e.g. 678854784)', 'error');
       }
 
-      // Construct Full International Number for API
       const fullMobile = '237' + localMobile;
 
-      // Disable button during request
       btn.disabled = true;
       btn.textContent = '⏳ Submitting...';
 
@@ -235,10 +344,8 @@
           throw new Error(data.error || 'Withdrawal request failed');
         }
 
-        // Success -> Refresh Balance & List
         showToast('✅ Request queued for processing!', 'success');
         
-        // Update UI immediately
         const w2 = await CniAuth.getWallet(UID);
         document.getElementById('balAmt').textContent = fmt(w2?.balance);
         amtInput.value = ''; 
@@ -250,7 +357,9 @@
         showToast(err.message || 'Failed to submit withdrawal.', 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = '💸 Request Withdrawal';
+        // Restore correct button text based on current time state
+        if (isWithinWindow()) btn.textContent = '💸 Request Withdrawal';
+        else btn.textContent = '🔒 Locked Until 10AM';
       }
     }
 
@@ -269,7 +378,6 @@
         }
 
         container.innerHTML = wds.map(w => {
-          // Display logic: Strip 237 for cleaner UI if present in DB
           let displayPhone = w.recipient_mobile || '';
           if (displayPhone.startsWith('237')) displayPhone = displayPhone.slice(3);
 
