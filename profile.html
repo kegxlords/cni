@@ -47,6 +47,8 @@
       const uid = session.user.id;
       console.log('[PROFILE] Loaded for user:', uid, session.user.email);
 
+      let profile = null;
+
       try {
         // Direct query bypassing any helper functions that might swallow errors
         const { data, error } = await window.sb
@@ -56,7 +58,7 @@
           .single();
           
         if (error) throw error;
-        let profile = data;
+        profile = data;
         console.log('[PROFILE] Raw DB response:', profile);
       } catch (e) {
         console.error('[PROFILE] Critical fetch failed:', e);
@@ -68,7 +70,7 @@
             id: uid,
             email: session.user.email,
             full_name: meta.full_name || 'Member',
-            phone: meta.phone || null,
+            phone: null, // Force null to avoid legacy bad data
             referral_code: code
           });
           if (!insErr) {
@@ -86,11 +88,24 @@
         id: uid,
         email: session.user.email,
         full_name: session.user.user_metadata?.full_name || 'Member',
-        phone: session.user.user_metadata?.phone || null,
+        phone: null, // Default to null instead of raw metadata to prevent crash
         referral_code: 'N/A',
         vip_level: 0,
         created_at: new Date().toISOString()
       };
+
+      // 🛡️ SAFE PHONE DISPLAY LOGIC
+      // Try to normalize. If it fails (returns empty string), show "Not Set"
+      let displayPhone = 'Not Set';
+      if (safeProfile.phone) {
+        const normalized = CniAuth.normalizePhone(safeProfile.phone);
+        // Only show if valid Nigerian length (starts with 0, >9 digits)
+        if (normalized && normalized.length >= 10) {
+          displayPhone = normalized;
+        } else {
+          displayPhone = 'Invalid / Legacy Number'; 
+        }
+      }
 
       // 3. Fetch wallet separately (non-blocking)
       let wallet = { balance: 0, total_deposit: 0, total_profit: 0 };
@@ -108,7 +123,7 @@
           <div class="av" style="width:52px;height:52px;font-size:20px;">${initials}</div>
           <div class="grow">
             <div class="name" style="font-size:16px;">${displayName}</div>
-            <div class="mut">${safeProfile.email || ''}<br>${safeProfile.phone || 'No phone set'}</div>
+            <div class="mut">${safeProfile.email || ''}<br>${displayPhone}</div>
           </div>
           <span class="chip vip">VIP ${Number(safeProfile.vip_level) || 0}</span>
         </div>
