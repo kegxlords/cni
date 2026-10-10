@@ -69,7 +69,7 @@
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
   <script>
-    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    const fmt = n => '₦' + Number(n || 0).toLocaleString();
     let SESSION = null;
     let UID = null;
     let CURRENT_FILTER = 'all';
@@ -167,8 +167,8 @@
           else sumOut += Math.abs(amt);
         });
 
-        document.getElementById('sumIn').textContent = fmt(sumIn).replace(' FCFA','');
-        document.getElementById('sumOut').textContent = fmt(sumOut).replace(' FCFA','');
+        document.getElementById('sumIn').textContent = fmt(sumIn).replace('₦','');
+        document.getElementById('sumOut').textContent = fmt(sumOut).replace('₦','');
         document.getElementById('countTx').textContent = list.length;
 
         if (list.length === 0) {
