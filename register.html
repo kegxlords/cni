@@ -20,14 +20,22 @@
       <form id="regForm">
         <label class="lbl">Full Name</label>
         <input class="input" id="rName" placeholder="Your full name" required />
+        
         <label class="lbl">Email Address</label>
         <input class="input" id="rEmail" type="email" placeholder="you@example.com" required />
-        <label class="lbl">Phone Number</label>
-        <input class="input" id="rPhone" placeholder="2376XXXXXXXX" required />
+        
+        <label class="lbl">Phone Number (Nigeria)</label>
+        <!-- Updated Placeholder -->
+        <input class="input" id="rPhone" type="tel" placeholder="08012345678" autocomplete="off" 
+               oninput="this.value=CniAuth.normalizePhone(this.value)" required />
+        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter your MTN/Airtel/Glo number (starts with 0)</div>
+        
         <label class="lbl">Password</label>
         <input class="input" id="rPass" type="password" placeholder="Min 6 characters" minlength="6" required />
+        
         <label class="lbl">Referral Code (optional)</label>
         <input class="input" id="rRef" placeholder="CNIXXXXX" />
+        
         <button class="btn cyan" id="rBtn" type="submit">🌐 Create Account</button>
       </form>
       <a class="btn ghost" style="margin-top:10px;" href="/">← Back to Login</a>
@@ -59,25 +67,28 @@
         const btn = document.getElementById('rBtn');
         const name = document.getElementById('rName').value.trim();
         const email = document.getElementById('rEmail').value.trim().toLowerCase();
-        const phone = document.getElementById('rPhone').value.replace(/\s/g, '');
+        const rawPhone = document.getElementById('rPhone').value;
         const pass = document.getElementById('rPass').value;
         const refCode = document.getElementById('rRef').value.trim();
 
         if (name.length < 3) return CniAuth.toast('Enter your full name', 'error');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return CniAuth.toast('Enter a valid email address', 'error');
-        if (phone.length < 9) return CniAuth.toast('Enter a valid phone number', 'error');
+        
+        // Validate Normalized Phone
+        const cleanPhone = CniAuth.normalizePhone(rawPhone);
+        if (!cleanPhone || cleanPhone.length < 10) return CniAuth.toast('Enter a valid Nigerian phone number', 'error');
+        
         if (pass.length < 6) return CniAuth.toast('Password must be at least 6 characters', 'error');
 
         btn.disabled = true; btn.textContent = 'Creating…';
         try {
-          await CniAuth.register(name, email, phone, pass, refCode);
+          // Send Cleaned Phone to API
+          await CniAuth.register(name, email, cleanPhone, pass, refCode);
           CniAuth.toast('🎉 Account created — please login');
           setTimeout(() => location.href = '/', 1200);
         } catch (err) {
           console.error('[CNI] register failed:', err);
-          const msg = typeof err === 'string'
-            ? err
-            : (err?.message || (err ? JSON.stringify(err) : 'Registration failed'));
+          const msg = typeof err === 'string' ? err : (err?.message || (err ? JSON.stringify(err) : 'Registration failed'));
           CniAuth.toast(msg, 'error');
           btn.disabled = false; btn.textContent = '🌐 Create Account';
         }
