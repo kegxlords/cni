@@ -41,9 +41,10 @@
         </select>
         
         <label class="lbl">Your MoMo Number</label>
+        <!-- Added autocomplete="off" explicitly to stop Safari filling old numbers -->
         <input class="input" id="dPhone" type="tel" placeholder="08012345678" autocomplete="off" 
                oninput="this.value=CniAuth.normalizePhone(this.value)" />
-        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter your number starting with 0</div>
+        <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter your number starting with 0 (e.g., 08012345678)</div>
         
         <button class="btn primary" id="dBtn">🚀 Initiate Deposit</button>
         <div class="mut" style="margin-top:8px;text-align:center;font-size:11px;">
@@ -82,9 +83,17 @@
         CniUI.header(SESSION, profile);
         CniUI.nav();
 
+        // ONLY prefill if the stored phone is actually valid Nigerian format
         if (profile?.phone) {
           let p = CniAuth.normalizePhone(profile.phone);
-          if (p) document.getElementById('dPhone').value = p;
+          // Check if result starts with 0 and is long enough
+          if (p && p.startsWith('0') && p.length >= 10) {
+             document.getElementById('dPhone').value = p;
+          } else {
+             // Clear field if legacy/bad data exists to force fresh entry
+             document.getElementById('dPhone').value = '';
+             document.getElementById('dPhone').placeholder = "Please enter valid NG number";
+          }
         }
 
         loadHistory(uid);
@@ -110,11 +119,15 @@
       const operator = opSelect.value;
 
       if (!amount || amount < 500) return showToast('Minimum deposit is 500 NGN', 'error');
-      if (!localMobile || localMobile.length < 10) return showToast('Enter a valid Nigerian phone number', 'error');
+      
+      // STRICT VALIDATION FOR NIGERIA
+      if (!localMobile || !localMobile.startsWith('0') || localMobile.length < 10) {
+        return showToast('Please enter a valid Nigerian phone number (starts with 0)', 'error');
+      }
 
       // Convert to International for Gateway
       const fullMobile = CniAuth.toInternationalNG(localMobile);
-      if (!fullMobile) return showToast('Invalid phone format', 'error');
+      if (!fullMobile) return showToast('Invalid phone format for gateway', 'error');
 
       btn.disabled = true; btn.textContent = '⏳ Opening Gateway...';
 
