@@ -43,7 +43,8 @@
         </div>
 
         <div class="mut" style="font-size:11px;margin-top:10px;text-align:center;">
-          Share either to earn commission on every deposit your friends make!        </div>
+          Share either to earn <strong><span class="dynamic-ref-pct">30%</span> commission</strong> on every deposit your friends make!
+        </div>
       </div>
 
       <!-- Downline List -->
@@ -59,9 +60,8 @@
   <script src="/assets/js/supabase.js"></script>
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
-  <!-- REPLACE THE ENTIRE <script> BLOCK IN team.html WITH THIS -->
-<script>
-    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+  <script>
+    const fmt = n => '₦' + Number(n || 0).toLocaleString();
     let SESSION = null;
     let UID = null;
     let CODE = '';
@@ -193,6 +193,6 @@
     function showToast(msg, type) {
       CniAuth.toast(msg, type);
     }
-</script>
+  </script>
 </body>
 </html>
