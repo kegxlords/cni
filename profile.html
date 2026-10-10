@@ -37,18 +37,16 @@
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
   <script>
-    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    const fmt = n => '₦' + Number(n || 0).toLocaleString();
 
     document.addEventListener('DOMContentLoaded', async function () {
-      // 1. Get session (must succeed)
+      // 1. GET SESSION
       const session = await CniAuth.requireAuth();
       if (!session) return;
       
       const uid = session.user.id;
       console.log('[PROFILE] Loaded for user:', uid, session.user.email);
 
-      // 2. Render header immediately with email fallback
-      let profile = null;
       try {
         // Direct query bypassing any helper functions that might swallow errors
         const { data, error } = await window.sb
@@ -58,7 +56,7 @@
           .single();
           
         if (error) throw error;
-        profile = data;
+        let profile = data;
         console.log('[PROFILE] Raw DB response:', profile);
       } catch (e) {
         console.error('[PROFILE] Critical fetch failed:', e);
@@ -71,10 +69,7 @@
             email: session.user.email,
             full_name: meta.full_name || 'Member',
             phone: meta.phone || null,
-            referral_code: code,
-            vip_level: 0,
-            is_admin: false,
-            is_banned: false
+            referral_code: code
           });
           if (!insErr) {
             await window.sb.from('wallets').insert({ user_id: uid }).catch(() => {});
@@ -118,9 +113,9 @@
           <span class="chip vip">VIP ${Number(safeProfile.vip_level) || 0}</span>
         </div>
         <div class="stats" style="margin:14px 0 0;">
-          <div class="stat"><b class="cyan">${fmt(wallet.balance).replace(' FCFA','')}</b><span>Balance</span></div>
-          <div class="stat"><b>${fmt(wallet.total_deposit).replace(' FCFA','')}</b><span>Deposited</span></div>
-          <div class="stat"><b class="green">${fmt(wallet.total_profit).replace(' FCFA','')}</b><span>Profit</span></div>
+          <div class="stat"><b class="cyan">${fmt(wallet.balance).replace('₦','')}</b><span>Balance</span></div>
+          <div class="stat"><b>${fmt(wallet.total_deposit).replace('₦','')}</b><span>Deposited</span></div>
+          <div class="stat"><b class="green">${fmt(wallet.total_profit).replace('₦','')}</b><span>Profit</span></div>
         </div>`;
 
       // 5. RENDER LEDGER PREVIEW
