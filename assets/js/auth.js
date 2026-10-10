@@ -1,23 +1,8 @@
 /* ============================================================
-   CALMTEL NETWORK INTERNATIONAL — AUTH & UTILITIES
+   CALMTEL NETWORK INTERNATIONAL — AUTH & UTILITIES (NG Edition)
    File: assets/js/auth.js
    ============================================================ */
 (function () {
-  const IMPERSONATION_STATE_KEY = 'cni_impersonation_state';
-  const IMPERSONATION_AUTH_STORAGE_KEY = 'cni-impersonation-auth-token';
-
-  async function impersonationRequest(accessToken, body) {
-    const response = await fetch('/api/admin/impersonate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
-      body: JSON.stringify(body),
-      cache: 'no-store'
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Impersonation request failed (HTTP ${response.status})`);
-    return data;
-  }
-
   const CniAuth = {
     _ensured: false,
     _banChecked: false,
@@ -100,10 +85,6 @@
     async requireAuth() {
       const session = await this.getSession();
       if (!session) {
-        if (window.CNI_IMPERSONATION_STATE || window.CNI_IMPERSONATION_EXPIRED_STATE) {
-          this.stopImpersonating(window.CNI_IMPERSONATION_EXPIRED_STATE ? 'expired' : 'ended');
-          return null;
-        }
         if (!this._banned) window.location.href = '/';
         return null;
       }
@@ -112,146 +93,10 @@
 
     async adminGuard() {
       const s = await this.getSession();
-      if (!s) {
-        console.warn('[ADMIN] No session found, redirecting home.');
-        location.href = '/';
-        return null;
-      }
-
-      try {
-        const { data: profile, error } = await window.sb
-          .from('users')
-          .select('is_admin')
-          .eq('id', s.user.id)
-          .maybeSingle();
-
-        if (error) {
-          console.error('[ADMIN] DB error checking admin:', error);
-          location.href = '/dashboard';
-          return null;
-        }
-
-        if (!profile || profile.is_admin !== true) {
-          console.warn('[ADMIN] User is not an admin; redirecting to dashboard.', {
-            uid: s.user.id,
-            isAdminFlag: profile?.is_admin
-          });
-          location.href = '/dashboard';
-          return null;
-        }
-
-        console.log('[ADMIN] Access granted for user:', s.user.id);
-        return s;
-      } catch (error) {
-        console.error('[ADMIN] Unexpected exception in guard:', error);
-        location.href = '/dashboard';
-        return null;
-      }
-    },
-
-    // ---------- ADMIN IMPERSONATION ----------
-    async startImpersonation(targetUserId, targetName) {
-      if (window.CNI_IMPERSONATION_STATE) throw new Error('An impersonation session is already active');
-      // Newer supabase.js builds publish CNI_* globals; older deployed builds
-      // still expose the same URL/key on the already-created Supabase client.
-      const supabaseUrl = window.CNI_SUPABASE_URL || window.sb?.supabaseUrl;
-      const supabaseAnonKey = window.CNI_SUPABASE_ANON_KEY || window.sb?.supabaseKey;
-      const supabaseSdk = window.supabase || window.supabaseJs;
-      const missing = [];
-      if (!supabaseUrl) missing.push('Supabase project URL');
-      if (!supabaseAnonKey) missing.push('Supabase anon key');
-      if (typeof supabaseSdk?.createClient !== 'function') missing.push('Supabase JS client');
-      if (missing.length) {
-        throw new Error(`Impersonation client unavailable: missing ${missing.join(', ')}. Update assets/js/supabase.js and assets/js/auth.js together.`);
-      }
-      if (!window.confirm(`Start a 30-minute full impersonation of ${targetName || 'this user'}? All actions will be performed as that user.`)) return false;
-
-      const { data: sessionData, error: sessionError } = await window.sb.auth.getSession();
-      const adminSession = sessionData?.session;
-      if (sessionError || !adminSession?.access_token) throw new Error('Your admin session has expired. Please sign in again.');
-
-      let result;
-      let targetClient;
-      try {
-        result = await impersonationRequest(adminSession.access_token, {
-          action: 'start', target_user_id: targetUserId
-        });
-        window.sessionStorage.removeItem(IMPERSONATION_AUTH_STORAGE_KEY);
-        targetClient = supabaseSdk.createClient(supabaseUrl, supabaseAnonKey, {
-          auth: {
-            storage: window.sessionStorage,
-            storageKey: IMPERSONATION_AUTH_STORAGE_KEY,
-            persistSession: true,
-            autoRefreshToken: true,
-            detectSessionInUrl: false
-          }
-        });
-        const preferredType = ['email', 'magiclink'].includes(result.verification_type)
-          ? result.verification_type : 'email';
-        const types = [preferredType, preferredType === 'email' ? 'magiclink' : 'email'];
-        let verifiedData = null;
-        let verifyError = null;
-        for (const type of types) {
-          const attempt = await targetClient.auth.verifyOtp({ token_hash: result.token_hash, type });
-          if (attempt.error) { verifyError = attempt.error; continue; }
-          verifiedData = attempt.data;
-          break;
-        }
-        if (!verifiedData) throw verifyError || new Error('Could not verify the one-time login link');
-        if (verifiedData?.user?.id !== targetUserId) throw new Error('Supabase returned a different user session');
-
-        const state = {
-          audit_id: result.audit_id,
-          target_user_id: result.target.id,
-          target_name: result.target.name,
-          expires_at: result.expires_at
-        };
-        window.sessionStorage.setItem(IMPERSONATION_STATE_KEY, JSON.stringify(state));
-        window.location.replace('/dashboard');
-        return true;
-      } catch (error) {
-        try { await targetClient?.auth.signOut({ scope: 'local' }); } catch (_) {}
-        if (result?.audit_id) {
-          try {
-            await impersonationRequest(adminSession.access_token, {
-              action: 'end', audit_id: result.audit_id, outcome: 'failed'
-            });
-          } catch (auditError) { console.error('[CNI] Could not close failed impersonation audit:', auditError); }
-        }
-        window.sessionStorage.removeItem(IMPERSONATION_STATE_KEY);
-        window.sessionStorage.removeItem(IMPERSONATION_AUTH_STORAGE_KEY);
-        throw new Error(error.message || 'Could not start impersonation');
-      }
-    },
-
-    async stopImpersonating(reason = 'ended') {
-      const state = window.CNI_IMPERSONATION_STATE || window.CNI_IMPERSONATION_EXPIRED_STATE;
-      if (!state) return false;
-      const adminClient = window.sbAdmin || window.sb;
-      let adminSession = null;
-      try {
-        const { data } = await adminClient.auth.getSession();
-        adminSession = data?.session || null;
-      } catch (error) { console.warn('[CNI] Could not restore admin session:', error); }
-
-      if (adminSession?.access_token && state.audit_id) {
-        try {
-          await impersonationRequest(adminSession.access_token, {
-            action: 'end', audit_id: state.audit_id,
-            outcome: reason === 'expired' ? 'expired' : 'ended'
-          });
-        } catch (error) { console.error('[CNI] Could not close impersonation audit:', error); }
-      }
-
-      if (window.CNI_IMPERSONATION_STATE) {
-        try { await window.sb?.auth.signOut({ scope: 'local' }); } catch (error) { console.warn('[CNI] Could not revoke impersonated session:', error); }
-      }
-      window.sessionStorage.removeItem(IMPERSONATION_STATE_KEY);
-      window.sessionStorage.removeItem(IMPERSONATION_AUTH_STORAGE_KEY);
-      window.CNI_IMPERSONATION_STATE = null;
-      window.CNI_IMPERSONATION_EXPIRED_STATE = null;
-      window.location.replace(adminSession ? '/admin/users' : '/');
-      return true;
+      if (!s) { location.href = '/'; return null; }
+      const { data: p } = await window.sb.from('users').select('is_admin').eq('id', s.user.id).single();
+      if (!p || !p.is_admin) { location.href = '/dashboard'; return null; }
+      return s;
     },
 
     // ---------- LOGIN ----------
@@ -272,7 +117,7 @@
       return data;
     },
 
-    // ---------- REGISTER (robust error extraction) ----------
+    // ---------- REGISTER ----------
     async register(full_name, email, phone, password, referral_code) {
       let res;
       try {
@@ -308,9 +153,6 @@
 
     // ---------- LOGOUT ----------
     async logout(redirect = '/') {
-      if (window.CNI_IMPERSONATION_STATE || window.CNI_IMPERSONATION_EXPIRED_STATE) {
-        return this.stopImpersonating('ended');
-      }
       this._ensured = false;
       this._banChecked = false;
       this._banned = false;
@@ -329,7 +171,7 @@
     },
 
     // ---------- FORMATTERS / UI ----------
-    money(n) { return Number(n || 0).toLocaleString() + ' FCFA'; },
+    money(n) { return '₦' + Number(n || 0).toLocaleString(); },
 
     timeAgo(dateStr) {
       const d = new Date(dateStr);
@@ -358,16 +200,39 @@
       toast.className = type === 'error' ? 'show err' : 'show';
       clearTimeout(this._toastTimer);
       this._toastTimer = setTimeout(() => { toast.className = ''; }, 3500);
+    },
+
+    // 🇳🇬 NIGERIA PHONE NORMALIZATION UTILS
+    
+    /**
+     * Cleans input to digits only, enforces local format starting with 0.
+     * Handles: "+234...", "234...", "080..." -> returns "080..."
+     */
+    normalizePhone(raw) {
+      if (!raw) return '';
+      let p = String(raw).replace(/[\s\-()+]/g, ''); // Strip non-digits
+      
+      // Convert International to Local
+      if (p.startsWith('234')) p = '0' + p.slice(3);
+      else if (p.startsWith('+234')) p = '0' + p.slice(4);
+      
+      // Ensure starts with 0
+      if (!p.startsWith('0')) p = '0' + p;
+      
+      // Cap at 11 digits (Standard NG Mobile Length)
+      return p.slice(0, 11);
+    },
+
+    /**
+     * Converts Local Phone (080...) to Full International for API/Gateway (23480...)
+     */
+    toInternationalNG(localPhone) {
+      const normalized = this.normalizePhone(localPhone);
+      if (!normalized || normalized.length < 10) return null;
+      // Drop leading 0, add 234
+      return '234' + normalized.slice(1);
     }
   };
 
   window.CniAuth = CniAuth;
-
-  const activeImpersonation = window.CNI_IMPERSONATION_STATE;
-  if (activeImpersonation) {
-    const remainingMs = Date.parse(activeImpersonation.expires_at) - Date.now();
-    window.setTimeout(() => CniAuth.stopImpersonating('expired'), Math.max(0, remainingMs));
-  } else if (window.CNI_IMPERSONATION_EXPIRED_STATE) {
-    window.setTimeout(() => CniAuth.stopImpersonating('expired'), 0);
-  }
 })();
