@@ -41,7 +41,7 @@
         </select>
         
         <label class="lbl">Your MoMo Number</label>
-        <!-- Added autocomplete="off" explicitly to stop Safari filling old numbers -->
+        <!-- Input allows typing naturally with 0 prefix -->
         <input class="input" id="dPhone" type="tel" placeholder="08012345678" autocomplete="off" 
                oninput="this.value=CniAuth.normalizePhone(this.value)" />
         <div class="mut" style="font-size:10px;margin-top:-6px;margin-bottom:10px;">Enter your number starting with 0 (e.g., 08012345678)</div>
@@ -83,14 +83,12 @@
         CniUI.header(SESSION, profile);
         CniUI.nav();
 
-        // ONLY prefill if the stored phone is actually valid Nigerian format
+        // Prefill logic: Only if valid Nigerian format exists in DB
         if (profile?.phone) {
           let p = CniAuth.normalizePhone(profile.phone);
-          // Check if result starts with 0 and is long enough
           if (p && p.startsWith('0') && p.length >= 10) {
              document.getElementById('dPhone').value = p;
           } else {
-             // Clear field if legacy/bad data exists to force fresh entry
              document.getElementById('dPhone').value = '';
              document.getElementById('dPhone').placeholder = "Please enter valid NG number";
           }
@@ -115,19 +113,22 @@
       const btn = document.getElementById('dBtn');
 
       const amount = Number(amtInput.value);
-      const localMobile = phoneInput.value; // Already normalized by oninput
+      const localMobile = phoneInput.value; // Already normalized by oninput (starts with 0)
       const operator = opSelect.value;
 
       if (!amount || amount < 500) return showToast('Minimum deposit is 500 NGN', 'error');
       
-      // STRICT VALIDATION FOR NIGERIA
+      // Validate User Input locally first
       if (!localMobile || !localMobile.startsWith('0') || localMobile.length < 10) {
         return showToast('Please enter a valid Nigerian phone number (starts with 0)', 'error');
       }
 
-      // Convert to International for Gateway
-      const fullMobile = CniAuth.toInternationalNG(localMobile);
-      if (!fullMobile) return showToast('Invalid phone format for gateway', 'error');
+      // CONVERT TO GATEWAY FORMAT (STRIP LEADING 0)
+      // This sends "9029733957" instead of "09029733957" or "+2349029733957"
+      const apiMobile = CniAuth.toApiPhone(localMobile);
+      if (!apiMobile) return showToast('Invalid phone format for gateway', 'error');
+      
+      console.log('[DEPOSIT] Sending to Gateway:', apiMobile); // Debug log
 
       btn.disabled = true; btn.textContent = '⏳ Opening Gateway...';
 
@@ -139,8 +140,8 @@
             action: 'deposit-create', 
             amount: amount, 
             operator: operator, 
-            mobile: fullMobile,
-            country_code: 'NG' // Explicitly send NG
+            mobile: apiMobile, // <-- Send Cleaned Number Here
+            country_code: 'NG' 
           })
         });
 
@@ -176,9 +177,14 @@
           const statusClass = t.status === 'paid' ? 'approved' : t.status === 'pending' ? 'sent' : 'rejected';
           const canCheck = t.status === 'pending';
           
-          // Display logic: Normalize back to local for viewing
+          // Display logic: Normalize back to local for viewing (add 0 back if needed)
           let displayPhone = t.phone || '';
-          if (displayPhone.startsWith('234')) displayPhone = '0' + displayPhone.slice(3);
+          // If stored as 10 digits (gateway format), add 0 for user readability
+          if (displayPhone.length === 10 && !displayPhone.startsWith('0')) {
+             displayPhone = '0' + displayPhone;
+          } else if (displayPhone.startsWith('234')) {
+             displayPhone = '0' + displayPhone.slice(3);
+          }
 
           return `
           <div class="card" style="padding:12px 14px;">
