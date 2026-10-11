@@ -207,6 +207,7 @@
     /**
      * Cleans input to digits only, enforces local format starting with 0.
      * Handles: "+234...", "234...", "080..." -> returns "080..."
+     * USE THIS FOR USER INPUT DISPLAY ONLY.
      */
     normalizePhone(raw) {
       if (!raw) return '';
@@ -224,13 +225,17 @@
     },
 
     /**
-     * Converts Local Phone (080...) to Full International for API/Gateway (23480...)
+     * Converts Local Phone (080...) to Format Required by Most NG Gateways (80...)
+     * STRIPS LEADING ZERO. This fixes the "must be 9 or 10 digits" error from OTPay.
+     * USE THIS WHEN SENDING TO API/GATEWAY.
      */
-    toInternationalNG(localPhone) {
-      const normalized = this.normalizePhone(localPhone);
+    toApiPhone(localPhone) {
+      const normalized = this.normalizePhone(localPhone); // Gets "09029733957"
+      
       if (!normalized || normalized.length < 10) return null;
-      // Drop leading 0, add 234
-      return '234' + normalized.slice(1);
+      
+      // Remove leading 0 -> Returns "9029733957" (10 digits)
+      return normalized.replace(/^0/, '');
     }
   };
 
