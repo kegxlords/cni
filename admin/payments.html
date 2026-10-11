@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Payments - Calmtel</title>
+  <link rel="stylesheet" href="/assets/css/cni.css" />
+  <style>
+    .adm-tabs { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--cni-line); }
+    .adm-tab { padding:10px 20px; font-weight:700; color:var(--cni-mut); cursor:pointer; background:none; border:none; }
+    .adm-tab.on { color:var(--cni-cyan); border-bottom:2px solid var(--cni-cyan); }
+    .adm-card { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:16px; margin-bottom:12px; }
+    .adm-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .adm-actions { display:flex; gap:8px; margin-top:12px; }
+    .btn-ok { background:#10B981; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:700;}
+    .btn-no { background:#EF4444; color:white; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:700;}
+  </style>
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="adm-wrap">
+    <div id="adm-nav"></div>
+    <h2 class="adm-title">Payment Management</h2>
+
+    <div class="adm-tabs">
+      <button class="adm-tab on" data-t="deposit">💳 Incoming Deposits</button>
+      <button class="adm-tab" data-t="withdrawal">💸 Outgoing Withdrawals</button>
+    </div>
+
+    <div id="listContainer"></div>
+  </div>
+  <div id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/assets/js/supabase.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script>
+    let SESSION = null;
+    let CURRENT_TYPE = 'deposit';
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      SESSION = await CniAuth.adminGuard();
+      if (!SESSION) return;
+      
+      const profile = await CniAuth.getProfile(SESSION.user.id);
+      CniUI.header(SESSION, profile);
+      CniUI.adminNav('payments'); // Ensure nav highlights this tab
+
+      document.querySelector('.adm-tabs').addEventListener('click', e => {
+        const btn = e.target.closest('.adm-tab');
+        if (!btn) return;
+        document.querySelectorAll('.adm-tab').forEach(t => t.classList.remove('on'));
+        btn.classList.add('on');
+        CURRENT_TYPE = btn.dataset.t;
+        loadList(CURRENT_TYPE);
+      });
+
+      loadList(CURRENT_TYPE);
+    });
+
+    async function loadList(type) {
+      const container = document.getElementById('listContainer');
+      container.innerHTML = '<div class="empty">Loading...</div>';
+
+      const { data: items } = await window.sb.from('payment_transactions')
+        .select('*, users(full_name, email)')
+        .eq('kind', type)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (!items || !items.length) {
+        container.innerHTML = `<div class="empty">No pending ${type}s found.</div>`;
+        return;
+      }
+
+      container.innerHTML = items.map(item => `
+        <div class="adm-card">
+          <div class="adm-row">
+            <div>
+              <div class="name">${item.users?.full_name || 'Unknown'} (${item.users?.email})</div>
+              <div class="mut">${new Date(item.created_at).toLocaleString()}</div>
+            </div>
+            <div class="amt cyan" style="font-size:18px;">₦${Number(item.amount).toLocaleString()}</div>
+          </div>
+          
+          <div style="background:rgba(0,0,0,.2);padding:10px;border-radius:8px;margin:10px 0;">
+            <div class="mut" style="font-size:11px;">DETAILS</div>
+            <div style="font-size:13px;margin-top:4px;">
+              <strong>Type:</strong> ${item.kind === 'deposit' ? 'Incoming' : 'Outgoing'}<br>
+              <strong>Bank/Wallet:</strong> ${item.sender_bank || 'N/A'}<br>
+              <strong>Ref/Acc:</strong> ${item.reference_number || 'N/A'}<br>
+              <strong>Sender/Receiver:</strong> ${item.sender_name || 'N/A'}
+            </div>
+          </div>
+
+          <div class="adm-actions">
+            <button class="btn-ok" onclick="approveItem('${item.id}', '${item.kind}', ${item.amount}, '${item.user_id}')">✅ Approve & Credit/Debit</button>
+            <button class="btn-no" onclick="rejectItem('${item.id}')">❌ Reject</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function approveItem(id, kind, amount, userId) {
+      if(!confirm(`Approve this ${kind}? This will update the user's wallet immediately.`)) return;
+
+      try {
+        // 1. Update Status
+        const { error: updErr } = await window.sb.from('payment_transactions').update({
+          status: 'approved',
+          processed_by: SESSION.user.id,
+          processed_at: new Date().toISOString()
+        }).eq('id', id);
+        if(updErr) throw updErr;
+
+        // 2. Adjust Wallet
+        const { data: wal } = await window.sb.from('wallets').select('*').eq('user_id', userId).single();
+        if (!wal) throw new Error('Wallet not found');
+
+        let newBal = Number(wal.balance);
+        let delta = Number(amount);
+        
+        if (kind === 'deposit') {
+          newBal += delta; // Add money
+        } else {
+          newBal -= delta; // Remove money
+        }
+
+        await window.sb.from('wallets').update({ balance: newBal }).eq('user_id', userId);
+
+        // 3. Log Transaction
+        await window.sb.from('wallet_transactions').insert({
+          user_id: userId,
+          type: kind === 'deposit' ? 'manual_deposit' : 'manual_withdrawal',
+          amount: kind === 'deposit' ? delta : -delta,
+          description: `Admin ${kind} approval #${id.slice(0,6)}`,
+          balance_after: newBal
+        });
+
+        CniAuth.toast('✅ Approved successfully!', 'success');
+        loadList(CURRENT_TYPE);
+
+      } catch (e) {
+        console.error(e);
+        CniAuth.toast('Error: ' + e.message, 'error');
+      }
+    }
+
+    async function rejectItem(id) {
+      const reason = prompt('Reason for rejection (optional):');
+      if(reason === null) return; // Cancelled
+
+      try {
+        await window.sb.from('payment_transactions').update({
+          status: 'rejected',
+          admin_note: reason,
+          processed_by: SESSION.user.id,
+          processed_at: new Date().toISOString()
+        }).eq('id', id);
+
+        CniAuth.toast('❌ Item rejected.', 'success');
+        loadList(CURRENT_TYPE);
+      } catch (e) {
+        CniAuth.toast('Error rejecting: ' + e.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>
