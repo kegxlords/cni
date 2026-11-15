@@ -118,7 +118,7 @@
         return CniAuth.toast('Complete the bank, account number, and account name for each account.', 'error');
       }
       const { error } = await window.sb.from('platform_settings').update({
-        deposit_accounts_json: JSON.stringify(accounts)
+        deposit_accounts_json: accounts
       }).eq('id', 1);
       if (error) return CniAuth.toast(error.message, 'error');
       BANK_ACCOUNTS = accounts;
