@@ -18,15 +18,18 @@ module.exports = async function handler(req, res) {
     const { data: prof } = await supabase.from('users').select('is_banned').eq('id', uid).single();
     if (prof?.is_banned) return res.status(403).json({ ok: false, error: 'Account suspended — contact support' });
 
-    const { amount, recipient_name, recipient_mobile, country_code, operator } = req.body || {};
+    const { amount, recipient_name, recipient_mobile, operator } = req.body || {};
     const amt = Number(amount);
+    const accountNumber = String(recipient_mobile || '').replace(/\D/g, '');
+    const bankName = String(operator || '').trim();
     const { data: s } = await supabase.from('platform_settings').select('*').eq('id', 1).single();
     const FEE_PCT = Number(s?.withdrawal_fee_percent ?? 8);
-    const MIN = Number(s?.min_withdrawal ?? 1500);
+    const MIN = Number(s?.min_withdrawal ?? 5000);
 
     if (!Number.isFinite(amt) || amt < MIN) return res.status(400).json({ ok: false, error: `Minimum withdrawal is ₦${MIN.toLocaleString()} NGN` });
     if ((recipient_name || '').trim().length < 3) return res.status(400).json({ ok: false, error: 'Recipient name required' });
-    if (!/^237\d{9}$/.test(String(recipient_mobile || ''))) return res.status(400).json({ ok: false, error: 'Valid 237... MoMo number required' });
+    if (!/^\d{10,14}$/.test(accountNumber)) return res.status(400).json({ ok: false, error: 'Enter a valid bank account number' });
+    if (!bankName) return res.status(400).json({ ok: false, error: 'Select a recipient bank' });
 
     const { data: wallet } = await supabase.from('wallets').select('*').eq('user_id', uid).single();
     if (!wallet || Number(wallet.balance) < amt) return res.status(400).json({ ok: false, error: 'Insufficient balance' });
@@ -36,8 +39,8 @@ module.exports = async function handler(req, res) {
 
     const { data: newReq, error: e1 } = await supabase.from('withdrawal_requests').insert({
       user_id: uid, bank_card_id: null, amount: amt, fee_percent: FEE_PCT, fee_amount: fee, net_amount: net,
-      status: 'pending', recipient_name: recipient_name.trim(), recipient_mobile: String(recipient_mobile).replace(/\s/g, ''),
-      country_code: country_code || 'CM', operator: operator || 'mtn', scheduled_for: new Date().toISOString()
+      status: 'pending', recipient_name: recipient_name.trim(), recipient_mobile: accountNumber,
+      country_code: 'NG', operator: bankName, scheduled_for: new Date().toISOString()
     }).select().single();
     if (e1) throw e1;
 
@@ -48,7 +51,7 @@ module.exports = async function handler(req, res) {
       description: `Withdrawal request (${net.toLocaleString()} net after ${FEE_PCT}% fee)`, balance_after: nb
     });
 
-    return res.status(200).json({ ok: true, request_id: newReq.id, net, fee });
+    return res.status(200).json({ ok: true, message: 'Withdrawal request submitted for manual processing', request_id: newReq.id, net, fee });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   }

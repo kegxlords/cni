@@ -76,6 +76,7 @@
   <script src="/assets/js/components.js"></script>
   <script>
     const fmt = n => '₦' + Number(n || 0).toLocaleString();
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
     let SESSION = null, UID = null, FEE_PCT = 8, MIN_WD = 5000;
 
     // --- TIME LOCK LOGIC (Same as before) ---
@@ -155,20 +156,24 @@
       btn.disabled = true; btn.textContent = '⏳ Submitting...';
 
       try {
-        const { error } = await window.sb.from('payment_transactions').insert({
-          user_id: UID,
-          kind: 'withdrawal',
-          amount: amount,
-          status: 'pending',
-          sender_name: name, // Reusing column for Recipient Name
-          sender_bank: bank, // Reusing column for Recipient Bank
-          reference_number: acc // Reusing column for Acc No
+        const response = await fetch('/api/withdraw/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+          body: JSON.stringify({
+            amount,
+            recipient_name: name,
+            recipient_mobile: acc,
+            country_code: 'NG',
+            operator: bank
+          })
         });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not submit withdrawal');
 
-        if (error) throw error;
-
-        showToast('✅ Request submitted! Admin will review shortly.', 'success');
+        showToast(result.message || 'Withdrawal request submitted for manual processing.', 'success');
         document.getElementById('wAmt').value = ''; summary();
+        const { data: wallet } = await window.sb.from('wallets').select('balance').eq('user_id', UID).maybeSingle();
+        if (wallet) document.getElementById('balAmt').textContent = fmt(wallet.balance);
         loadHistory();
 
       } catch (err) {
@@ -180,28 +185,46 @@
 
     async function loadHistory() {
       const container = document.getElementById('wList');
-      const { data: wds } = await window.sb.from('payment_transactions')
+      try {
+      const [historyResponse, legacyResult] = await Promise.all([
+        fetch('/api/withdraw/history', { headers: { 'Authorization': 'Bearer ' + SESSION.access_token } }),
+        window.sb.from('payment_transactions')
         .select('*')
         .eq('user_id', UID)
         .eq('kind', 'withdrawal')
         .order('created_at', { ascending: false })
-        .limit(15);
+        .limit(15)
+      ]);
+      const history = await historyResponse.json();
+      if (!historyResponse.ok || !history.ok) throw new Error(history.error || 'Could not load withdrawal history');
+      if (legacyResult.error) console.warn('[WITHDRAW] Legacy history unavailable:', legacyResult.error.message);
+      const current = (history.withdrawals || []).map(w => ({
+        ...w, displayBank: w.operator || '', displayAccount: w.recipient_mobile || ''
+      }));
+      const legacy = (legacyResult.data || []).map(w => ({
+        ...w, displayBank: w.sender_bank || '', displayAccount: w.reference_number || ''
+      }));
+      const wds = [...current, ...legacy].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 15);
 
       if (!wds || !wds.length) { container.innerHTML = '<div class="empty">No withdrawals yet.</div>'; return; }
 
       container.innerHTML = wds.map(w => {
-        const cls = w.status === 'approved' ? 'paid' : w.status === 'rejected' ? 'sent' : 'completed';
+        const status = w.status === 'sent' ? 'pending' : String(w.status || 'unknown').toLowerCase();
+        const cls = status === 'approved' ? 'paid' : status === 'rejected' ? 'sent' : 'completed';
         return `
         <div class="card" style="padding:12px 14px;margin-bottom:8px;">
           <div class="row">
             <div class="grow">
               <div class="name">${fmt(w.amount)}</div>
-              <div class="mut">${w.sender_bank} • To: ${w.reference_number}<br>${CniAuth.timeAgo(w.created_at)}</div>
+              <div class="mut">${esc(w.displayBank)} • To: ${esc(w.displayAccount)}<br>${esc(CniAuth.timeAgo(w.created_at))}</div>
             </div>
-            <div class="right"><span class="chip ${cls}">${w.status.toUpperCase()}</span></div>
+            <div class="right"><span class="chip ${cls}">${esc(status.toUpperCase())}</span></div>
           </div>
         </div>`;
       }).join('');
+      } catch (error) {
+        container.innerHTML = `<div class="empty" role="alert">Could not load withdrawal history: ${esc(error.message)}</div>`;
+      }
     }
 
     function showToast(msg, type) { CniAuth.toast(msg, type); }

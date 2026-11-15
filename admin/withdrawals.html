@@ -15,13 +15,12 @@
 
     <div class="adm-stats">
       <div class="adm-stat"><b id="cPending">0</b><span>Pending</span></div>
-      <div class="adm-stat"><b id="cSent">0</b><span>Sent</span></div>
       <div class="adm-stat"><b id="cDone">0</b><span>Approved</span></div>
+      <div class="adm-stat"><b id="cRejected">0</b><span>Rejected</span></div>
     </div>
 
     <div class="adm-tabs">
       <div class="adm-tab on" data-t="pending">Pending</div>
-      <div class="adm-tab" data-t="sent">Sent</div>
       <div class="adm-tab" data-t="approved">Approved</div>
       <div class="adm-tab" data-t="rejected">Rejected</div>
     </div>
@@ -41,21 +40,23 @@
     let SESSION = null, TAB = 'pending';
 
     async function act(id, action) {
-      const msgs = {
-        send: 'Send this withdrawal to pcmedia for payout?',
-        resend: 'Resend this withdrawal to pcmedia?',
-        approve: 'Confirm payout completed — mark APPROVED?',
-        reject: 'Reject and REFUND the user?'
+      const messages = {
+        approve: 'Mark this withdrawal as approved? Confirm that you have processed the payout manually.',
+        reject: 'Reject this withdrawal and refund the full amount to the member?'
       };
-      if (!confirm(msgs[action])) return;
-      const res = await fetch('/api/withdraw/manage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-        body: JSON.stringify({ action, request_id: id })
-      });
-      const d = await res.json();
-      CniAuth.toast(d.ok ? (d.message || 'Done') : d.error, d.ok ? 'success' : 'error');
-      load();
+      if (!messages[action] || !confirm(messages[action])) return;
+      try {
+        const res = await fetch('/api/withdraw/manage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+          body: JSON.stringify({ action, request_id: id })
+        });
+        const d = await res.json();
+        CniAuth.toast(res.ok && d.ok ? (d.message || 'Done') : (d.error || 'Could not process withdrawal'), res.ok && d.ok ? 'success' : 'error');
+        if (res.ok && d.ok) load();
+      } catch (error) {
+        CniAuth.toast(error.message || 'Could not process withdrawal', 'error');
+      }
     }
 
     async function load() {
@@ -63,8 +64,8 @@
       try {
       const { counts, withdrawals } = await CniAdminApi.get('withdrawals', { status: TAB });
       document.getElementById('cPending').textContent = counts.pending || 0;
-      document.getElementById('cSent').textContent = counts.sent || 0;
       document.getElementById('cDone').textContent = counts.approved || 0;
+      document.getElementById('cRejected').textContent = counts.rejected || 0;
       const all = withdrawals || [];
       if (!all.length) { list.innerHTML = '<div class="adm-empty">No ' + TAB + ' withdrawals.</div>'; return; }
 
@@ -74,27 +75,21 @@
             <div>
               <div class="adm-name">${esc(w.users?.full_name || 'User')}</div>
               <div class="adm-sub">${esc(w.users?.email || '')}<br>
-                💳 ${esc(w.recipient_name || '')} • ${esc(w.recipient_mobile || '')} • ${esc((w.operator || '').toUpperCase())}<br>
-                Requested ${esc(CniAuth.timeAgo(w.created_at))}${w.pcmedia_sent_at ? '<br>🔗 Sent ' + esc(CniAuth.timeAgo(w.pcmedia_sent_at)) : ''}</div>
+                💳 ${esc(w.recipient_name || '')}<br>
+                Bank: ${esc(w.operator || '—')} • Account: ${esc(w.recipient_mobile || '—')}<br>
+                Requested ${esc(CniAuth.timeAgo(w.created_at))}</div>
             </div>
             <div style="text-align:right;">
               <div class="adm-amt red">${fmt(w.amount)}</div>
               <div class="adm-sub">Fee ${fmt(w.fee_amount)} • Pay <b style="color:var(--cni-green)">${fmt(w.net_amount)}</b></div>
-              <span class="chip ${['pending', 'sent', 'approved', 'rejected'].includes(w.status) ? w.status : 'pending'}">${esc(String(w.status || 'unknown').toUpperCase())}</span>
+              <span class="chip ${['pending', 'sent', 'approved', 'rejected'].includes(w.status) ? (w.status === 'sent' ? 'pending' : w.status) : 'pending'}">${esc(String(w.status === 'sent' ? 'pending' : (w.status || 'unknown')).toUpperCase())}</span>
             </div>
           </div>
           ${w.admin_note ? `<div class="adm-sub" style="margin-top:8px;">📝 ${esc(w.admin_note)}</div>` : ''}
           ${TAB === 'pending' ? `
           <div class="adm-actions">
-            <button class="adm-btn warn" onclick="act(${jsArg(w.id)},'send')">🔗 Send to pcmedia</button>
-            <button class="adm-btn ok" onclick="act(${jsArg(w.id)},'approve')">✓ Approve</button>
-            <button class="adm-btn no" onclick="act(${jsArg(w.id)},'reject')">✕ Refund</button>
-          </div>` : ''}
-          ${TAB === 'sent' ? `
-          <div class="adm-actions">
-            <button class="adm-btn ok" onclick="act(${jsArg(w.id)},'approve')">✓ Approve (paid)</button>
-            <button class="adm-btn warn" onclick="act(${jsArg(w.id)},'resend')">🔁 Resend</button>
-            <button class="adm-btn no" onclick="act(${jsArg(w.id)},'reject')">✕ Refund</button>
+            <button class="adm-btn ok" onclick="act(${jsArg(w.id)},'approve')">Approve</button>
+            <button class="adm-btn no" onclick="act(${jsArg(w.id)},'reject')">Reject</button>
           </div>` : ''}
         </div>`).join('');
       } catch (error) {

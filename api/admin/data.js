@@ -1,7 +1,7 @@
 // api/admin/data.js — authenticated, read-only data for the CNI admin UI.
 const { createClient } = require('@supabase/supabase-js');
 
-const ALLOWED_WITHDRAWAL_STATUSES = new Set(['pending', 'sent', 'approved', 'rejected']);
+const ALLOWED_WITHDRAWAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 
 function failOnError(result, label) {
   if (result.error) throw new Error(`${label}: ${result.error.message}`);
@@ -51,21 +51,21 @@ module.exports = async function handler(req, res) {
       const midnightUtc = new Date();
       midnightUtc.setUTCHours(0, 0, 0, 0);
       const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const [users, banned, pending, sent, approvedToday, deposits24h, recent] = await Promise.all([
+      const [users, banned, pending, rejected, approvedToday, deposits24h, recent] = await Promise.all([
         supabase.from('users').select('id', { count: 'exact', head: true }),
         supabase.from('users').select('id', { count: 'exact', head: true }).eq('is_banned', true),
-        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).in('status', ['pending', 'sent']),
+        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
         supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved').gte('created_at', midnightUtc.toISOString()),
         supabase.from('payment_transactions').select('amount').eq('kind', 'deposit').eq('status', 'paid').gte('created_at', last24Hours),
         supabase.from('withdrawal_requests').select('*, users(full_name)').order('created_at', { ascending: false }).limit(8)
       ]);
-      [users, banned, pending, sent, approvedToday, deposits24h, recent].forEach((r, i) => failOnError(r, `Overview query ${i + 1} failed`));
+      [users, banned, pending, rejected, approvedToday, deposits24h, recent].forEach((r, i) => failOnError(r, `Overview query ${i + 1} failed`));
       return res.status(200).json({
         users: users.count || 0,
         banned: banned.count || 0,
         pending: pending.count || 0,
-        sent: sent.count || 0,
+        rejected: rejected.count || 0,
         approvedToday: approvedToday.count || 0,
         deposits24h: deposits24h.data || [],
         recent: recent.data || []
@@ -102,15 +102,19 @@ module.exports = async function handler(req, res) {
     if (action === 'withdrawals') {
       const status = String(req.query.status || 'pending');
       if (!ALLOWED_WITHDRAWAL_STATUSES.has(status)) return res.status(400).json({ error: 'Invalid withdrawal status' });
-      const [pending, sent, approved, withdrawals] = await Promise.all([
-        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+      const withdrawalsQuery = supabase.from('withdrawal_requests').select('*, users(full_name, email)');
+      const statusQuery = status === 'pending'
+        ? withdrawalsQuery.in('status', ['pending', 'sent'])
+        : withdrawalsQuery.eq('status', status);
+      const [pending, approved, rejected, withdrawals] = await Promise.all([
+        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).in('status', ['pending', 'sent']),
         supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
-        supabase.from('withdrawal_requests').select('*, users(full_name, email)').eq('status', status).order('created_at', { ascending: false }).limit(50)
+        supabase.from('withdrawal_requests').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+        statusQuery.order('created_at', { ascending: false }).limit(50)
       ]);
-      [pending, sent, approved, withdrawals].forEach((r, i) => failOnError(r, `Withdrawal query ${i + 1} failed`));
+      [pending, approved, rejected, withdrawals].forEach((r, i) => failOnError(r, `Withdrawal query ${i + 1} failed`));
       return res.status(200).json({
-        counts: { pending: pending.count || 0, sent: sent.count || 0, approved: approved.count || 0 },
+        counts: { pending: pending.count || 0, approved: approved.count || 0, rejected: rejected.count || 0 },
         withdrawals: withdrawals.data || []
       });
     }
@@ -121,7 +125,10 @@ module.exports = async function handler(req, res) {
         'Could not load platform settings'
       );
       if (!result.data) return res.status(404).json({ error: 'Platform settings row not found' });
-      return res.status(200).json({ settings: result.data });
+      const settings = { ...result.data };
+      delete settings.pcmedia_bridge_url;
+      delete settings.pcmedia_bridge_secret;
+      return res.status(200).json({ settings });
     }
 
     return res.status(400).json({ error: 'Unknown admin data action' });
