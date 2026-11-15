@@ -18,7 +18,7 @@
       <input class="adm-input" id="setFee" type="number" min="0" max="90" />
       <label class="lbl">Referral Bonus (%)</label>
       <input class="adm-input" id="setBonus" type="number" min="0" max="90" />
-      <label class="lbl">Minimum Withdrawal (FCFA)</label>
+      <label class="lbl">Minimum Withdrawal (NGN ₦)</label>
       <input class="adm-input" id="setMin" type="number" min="0" />
       <label class="lbl">Telegram Group URL</label>
       <input class="adm-input" id="setTgGroup" placeholder="https://t.me/..." />
@@ -43,20 +43,12 @@
       <button class="adm-btn" style="width:100%;" onclick="CniAuth.copy(document.getElementById('cbIn').value, 'Callback URL copied')">📋 Copy Callback URL</button>
     </div>
 
-    <div class="adm-title" style="font-size:15px;">⚡ OTPay Gateway</div>
+    <div class="adm-title" style="font-size:15px;">🏦 Manual Deposit Bank Accounts</div>
     <div class="adm-card">
-      <label class="lbl">Gateway Enabled</label>
-      <select class="adm-input" id="setOtpayEnabled">
-        <option value="true">✅ Enabled</option>
-        <option value="false">⛔ Disabled (kill-switch)</option>
-      </select>
-      <label class="lbl">Default Country</label>
-      <select class="adm-input" id="setCountry">
-        <option value="CM">🇨🇲 Cameroon (XAF)</option>
-        <option value="CI">🇨🇮 Côte d'Ivoire (XOF)</option>
-        <option value="SN">🇸🇳 Senegal (XOF)</option>
-      </select>
-      <button class="adm-go" onclick="saveGateway()">💾 Save Gateway</button>
+      <div class="adm-sub" style="margin-bottom:12px;">These accounts appear on the member Deposit page after saving. Remove an account to stop showing it to members.</div>
+      <div id="bankAccounts"></div>
+      <button class="adm-btn" type="button" style="width:100%;margin:10px 0;" onclick="addBankAccount()">＋ Add bank account</button>
+      <button class="adm-go" onclick="saveBankAccounts()">💾 Save Bank Details</button>
     </div>
 
     <div class="adm-title" style="font-size:15px;">🛠 Tools</div>
@@ -67,6 +59,7 @@
     <div class="adm-card" style="margin-top:14px;">
       <div class="adm-name">ℹ️ Notes</div>
       <div class="adm-sub">
+        • Deposits use manual bank transfer and are credited after admin approval.<br>
         • Daily 32.5% income auto-runs nightly 23:00 UTC (Vercel cron).<br>
         • Withdrawals: Pending → 🔗 Sent to pcmedia → auto-approved on their "paid" callback, or ✓ Approve manually.<br>
         • Failed pcmedia payouts auto-refund the user (single-refund guaranteed).<br>
@@ -83,6 +76,8 @@
   <script src="/assets/js/admin-api.js"></script>
   <script>
     let SESSION = null;
+    let BANK_ACCOUNTS = [];
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
 
     function genSecret() {
       const arr = new Uint8Array(24);
@@ -103,6 +98,55 @@
       const { error } = await window.sb.from('platform_settings').update(payload).eq('id', 1);
       CniAuth.toast(error ? error.message : 'Platform settings saved');
     }
+    function renderBankAccounts() {
+      const container = document.getElementById('bankAccounts');
+      if (!BANK_ACCOUNTS.length) {
+        container.innerHTML = '<div class="empty">No deposit bank accounts configured yet.</div>';
+        return;
+      }
+      container.innerHTML = BANK_ACCOUNTS.map((account, index) => `
+        <div class="adm-card" data-bank-row="${index}" style="margin:10px 0;padding:12px;">
+          <label class="lbl">Bank / Provider</label>
+          <input class="adm-input" data-field="bank" value="${esc(account.bank)}" placeholder="e.g. GTBank" />
+          <label class="lbl">Account Number</label>
+          <input class="adm-input" data-field="acc_no" value="${esc(account.acc_no)}" inputmode="numeric" placeholder="Account number" />
+          <label class="lbl">Account Name</label>
+          <input class="adm-input" data-field="name" value="${esc(account.name)}" placeholder="Name on the account" />
+          <button class="adm-btn no" type="button" style="width:100%;margin-top:8px;" onclick="removeBankAccount(${index})">Remove account</button>
+        </div>`).join('');
+    }
+    function collectBankAccountRows() {
+      return [...document.querySelectorAll('[data-bank-row]')].map(row => ({
+        bank: row.querySelector('[data-field="bank"]').value.trim(),
+        acc_no: row.querySelector('[data-field="acc_no"]').value.trim(),
+        name: row.querySelector('[data-field="name"]').value.trim()
+      }));
+    }
+    function addBankAccount() {
+      BANK_ACCOUNTS = collectBankAccountRows();
+      BANK_ACCOUNTS.push({ bank: '', acc_no: '', name: '' });
+      renderBankAccounts();
+      const inputs = document.querySelectorAll('[data-bank-row] input[data-field="bank"]');
+      inputs[inputs.length - 1]?.focus();
+    }
+    function removeBankAccount(index) {
+      BANK_ACCOUNTS = collectBankAccountRows();
+      BANK_ACCOUNTS.splice(index, 1);
+      renderBankAccounts();
+    }
+    async function saveBankAccounts() {
+      const accounts = collectBankAccountRows();
+      if (accounts.some(a => !a.bank || !a.acc_no || !a.name)) {
+        return CniAuth.toast('Complete the bank, account number, and account name for each account.', 'error');
+      }
+      const { error } = await window.sb.from('platform_settings').update({
+        deposit_accounts_json: JSON.stringify(accounts)
+      }).eq('id', 1);
+      if (error) return CniAuth.toast(error.message, 'error');
+      BANK_ACCOUNTS = accounts;
+      renderBankAccounts();
+      CniAuth.toast('Manual deposit bank details saved', 'success');
+    }
     async function saveBridge() {
       const payload = {
         pcmedia_bridge_url: document.getElementById('setBridge').value.trim(),
@@ -121,14 +165,6 @@
       if (!ct.includes('application/json')) return CniAuth.toast('Bad response from bridge', 'error');
       const d = await res.json();
       CniAuth.toast(d.ok ? `Bridge replied HTTP ${d.status}` : d.error, d.ok ? 'success' : 'error');
-    }
-    async function saveGateway() {
-      const payload = {
-        otpay_enabled: document.getElementById('setOtpayEnabled').value === 'true',
-        otpay_country: document.getElementById('setCountry').value
-      };
-      const { error } = await window.sb.from('platform_settings').update(payload).eq('id', 1);
-      CniAuth.toast(error ? error.message : 'Gateway settings saved');
     }
     async function runIncome() {
       if (!confirm('Credit daily 32.5% income to all active plans now?')) return;
@@ -161,9 +197,19 @@
       document.getElementById('setWa').value = s.whatsapp_group_url || '';
       document.getElementById('setBridge').value = s.pcmedia_bridge_url || '';
       document.getElementById('setSecret').value = s.pcmedia_bridge_secret || '';
-      document.getElementById('setOtpayEnabled').value = String(s.otpay_enabled !== false);
-      if (s.otpay_country) document.getElementById('setCountry').value = s.otpay_country;
-      document.getElementById('cbIn').value = location.origin + '/api/payments/otpay-callback';
+      document.getElementById('cbIn').value = location.origin + '/api/withdraw/pcmedia-callback';
+      try {
+        const parsed = typeof s.deposit_accounts_json === 'string'
+          ? JSON.parse(s.deposit_accounts_json || '[]')
+          : (s.deposit_accounts_json || []);
+        BANK_ACCOUNTS = Array.isArray(parsed) ? parsed.map(a => ({
+          bank: String(a.bank || ''), acc_no: String(a.acc_no || ''), name: String(a.name || '')
+        })) : [];
+      } catch (error) {
+        BANK_ACCOUNTS = [];
+        CniAuth.toast('Saved bank details could not be parsed. Please re-enter them.', 'error');
+      }
+      renderBankAccounts();
     }
 
     document.addEventListener('DOMContentLoaded', async function () {

@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
     const FEE_PCT = Number(s?.withdrawal_fee_percent ?? 8);
     const MIN = Number(s?.min_withdrawal ?? 1500);
 
-    if (!Number.isFinite(amt) || amt < MIN) return res.status(400).json({ ok: false, error: `Minimum withdrawal is ${MIN.toLocaleString()} FCFA` });
+    if (!Number.isFinite(amt) || amt < MIN) return res.status(400).json({ ok: false, error: `Minimum withdrawal is ₦${MIN.toLocaleString()} NGN` });
     if ((recipient_name || '').trim().length < 3) return res.status(400).json({ ok: false, error: 'Recipient name required' });
     if (!/^237\d{9}$/.test(String(recipient_mobile || ''))) return res.status(400).json({ ok: false, error: 'Valid 237... MoMo number required' });
 

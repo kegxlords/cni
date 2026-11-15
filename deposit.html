@@ -87,7 +87,8 @@
   <script>
     const fmt = n => '₦' + Number(n || 0).toLocaleString();
     let SESSION = null;
-    let ACCOUNTS = []; // Will hold bank details from settings
+    let ACCOUNTS = [];
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
 
     document.addEventListener('DOMContentLoaded', async function () {
       SESSION = await CniAuth.requireAuth();
@@ -103,18 +104,17 @@
         CniUI.header(SESSION, profileRes.data);
         CniUI.nav();
 
-        // Parse Accounts JSON from Settings (Assume stored as JSON string or array)
-        // If your settings table stores them differently, adjust parsing here.
-        // Example structure expected: [{"bank":"GTBank","acc_no":"0123...","name":"Calmtel Ltd"}]
         const s = settingsRes.data;
         if (s.deposit_accounts_json) {
-          try { ACCOUNTS = JSON.parse(s.deposit_accounts_json); } catch(e) { console.error("Bad JSON", e); }
-        } else {
-          // Fallback hardcoded demo data if DB isn't set up yet
-          ACCOUNTS = [
-            { bank: 'GTBank', acc_no: '0123456789', name: 'CALMTEL NETWORK INTL LTD' },
-            { bank: 'OPay', acc_no: '08012345678', name: 'GLOBAL PAYSURE SERVICES' }
-          ];
+          try {
+            const parsed = typeof s.deposit_accounts_json === 'string'
+              ? JSON.parse(s.deposit_accounts_json)
+              : s.deposit_accounts_json;
+            ACCOUNTS = Array.isArray(parsed) ? parsed.filter(a => a && a.bank && a.acc_no && a.name) : [];
+          } catch(e) {
+            ACCOUNTS = [];
+            console.error('Bad manual bank details in platform settings', e);
+          }
         }
 
         renderAccounts();
@@ -123,7 +123,10 @@
         document.getElementById('loadingState').style.display = 'none';
         document.getElementById('mainContent').style.display = 'block';
         
-        document.getElementById('depBtn').addEventListener('click', submitDeposit);
+        const depBtn = document.getElementById('depBtn');
+        depBtn.disabled = ACCOUNTS.length === 0;
+        if (!ACCOUNTS.length) depBtn.textContent = 'Deposits unavailable';
+        depBtn.addEventListener('click', submitDeposit);
 
       } catch (err) {
         console.error('[DEPOSIT] Init Error:', err);
@@ -134,7 +137,7 @@
     function renderAccounts() {
       const container = document.getElementById('accountList');
       if (!ACCOUNTS.length) {
-        container.innerHTML = '<div class="empty">No active accounts found. Contact support.</div>';
+        container.innerHTML = '<div class="empty">Bank transfer details are not configured yet. Please contact support.</div>';
         return;
       }
 
@@ -142,16 +145,19 @@
         <div class="card" style="padding:12px;margin-bottom:8px;background:rgba(53,199,255,.05);">
           <div class="row">
             <div class="grow">
-              <div class="name" style="font-size:14px;">${a.bank}</div>
-              <div class="mut">${a.name}</div>
+              <div class="name" style="font-size:14px;">${esc(a.bank)}</div>
+              <div class="mut">${esc(a.name)}</div>
               <div style="font-family:monospace;font-weight:900;color:var(--cni-cyan);font-size:16px;margin-top:4px;">
-                ${a.acc_no}
+                ${esc(a.acc_no)}
               </div>
             </div>
-            <button class="btn sm cyan" onclick="copyAcc('${a.acc_no}')">📋 Copy</button>
+            <button class="btn sm cyan" type="button" data-copy-account="${esc(a.acc_no)}">📋 Copy</button>
           </div>
         </div>
       `).join('');
+      container.querySelectorAll('[data-copy-account]').forEach(button => {
+        button.addEventListener('click', () => copyAcc(button.getAttribute('data-copy-account')));
+      });
     }
 
     function copyAcc(num) {
@@ -159,6 +165,7 @@
     }
 
     async function submitDeposit() {
+      if (!ACCOUNTS.length) return CniAuth.toast('Deposits are unavailable until bank details are configured.', 'error');
       const amt = Number(document.getElementById('depAmt').value);
       const name = document.getElementById('depName').value.trim();
       const bank = document.getElementById('depBank').value;
@@ -227,7 +234,7 @@
           <div class="row">
             <div class="grow">
               <div class="name">${fmt(t.amount)}</div>
-              <div class="mut">${t.sender_bank} • Ref: ${t.reference_number}<br>${CniAuth.timeAgo(t.created_at)}</div>
+              <div class="mut">${esc(t.sender_bank)} • Ref: ${esc(t.reference_number)}<br>${CniAuth.timeAgo(t.created_at)}</div>
             </div>
             <div class="right"><span class="chip ${cls}">${label}</span></div>
           </div>

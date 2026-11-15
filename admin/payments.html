@@ -106,6 +106,19 @@
       if(!confirm(`Approve this ${kind}? This will update the user's wallet immediately.`)) return;
 
       try {
+        if (kind === 'deposit') {
+          const response = await fetch('/api/admin/manual-deposit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+            body: JSON.stringify({ action: 'approve', transaction_id: id })
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || 'Could not approve deposit');
+          CniAuth.toast(result.message || 'Deposit approved and credited', 'success');
+          loadList(CURRENT_TYPE);
+          return;
+        }
+
         // 1. Update Status
         const { error: updErr } = await window.sb.from('payment_transactions').update({
           status: 'approved',
@@ -152,6 +165,19 @@
       if(reason === null) return; // Cancelled
 
       try {
+        const { data: item } = await window.sb.from('payment_transactions').select('kind').eq('id', id).single();
+        if (item?.kind === 'deposit') {
+          const response = await fetch('/api/admin/manual-deposit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
+            body: JSON.stringify({ action: 'reject', transaction_id: id, reason })
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || 'Could not reject deposit');
+          CniAuth.toast(result.message || 'Deposit rejected', 'success');
+          loadList(CURRENT_TYPE);
+          return;
+        }
         await window.sb.from('payment_transactions').update({
           status: 'rejected',
           admin_note: reason,

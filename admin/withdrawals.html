@@ -35,7 +35,7 @@
   <script src="/assets/js/components.js"></script>
   <script src="/assets/js/admin-api.js"></script>
   <script>
-    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    const fmt = n => '₦' + Number(n || 0).toLocaleString();
     const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
     const jsArg = value => esc(JSON.stringify(String(value ?? '')));
     let SESSION = null, TAB = 'pending';

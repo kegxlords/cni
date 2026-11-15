@@ -39,7 +39,7 @@
     <div class="adm-stats">
       <div class="adm-stat"><b id="dPendingCount">0</b><span>Pending Orders</span></div>
       <div class="adm-stat"><b id="dPaidCount">0</b><span>Paid Today</span></div>
-      <div class="adm-stat"><b id="dVolToday">0</b><span>Volume (FCFA)</span></div>
+      <div class="adm-stat"><b id="dVolToday">₦0</b><span>Volume (NGN)</span></div>
     </div>
 
     <!-- Tabs -->
@@ -58,7 +58,9 @@
   <script src="/assets/js/auth.js"></script>
   <script src="/assets/js/components.js"></script>
   <script>
-    const fmt = n => Number(n || 0).toLocaleString() + ' FCFA';
+    const fmt = n => '₦' + Number(n || 0).toLocaleString();
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;', "'":'&#39;' }[c]));
+    const jsArg = value => esc(JSON.stringify(String(value ?? '')));
     let SESSION = null;
     let CURRENT_TAB = 'pending'; // Default view
 
@@ -95,13 +97,13 @@
       
       const [{ count: p }, { count: pd }, { data: vol }] = await Promise.all([
         sb.from('payment_transactions').select('*', { count: 'exact', head: true }).eq('kind','deposit').eq('status','pending'),
-        sb.from('payment_transactions').select('*', { count: 'exact', head: true }).eq('kind','deposit').eq('status','paid').gte('created_at', sod.toISOString()),
-        sb.from('payment_transactions').select('amount').eq('kind','deposit').eq('status','paid').gte('created_at', sod.toISOString())
+        sb.from('payment_transactions').select('*', { count: 'exact', head: true }).eq('kind','deposit').in('status',['paid','approved']).gte('created_at', sod.toISOString()),
+        sb.from('payment_transactions').select('amount').eq('kind','deposit').in('status',['paid','approved']).gte('created_at', sod.toISOString())
       ]);
 
       document.getElementById('dPendingCount').textContent = p || 0;
       document.getElementById('dPaidCount').textContent = pd || 0;
-      document.getElementById('dVolToday').textContent = ((vol||[]).reduce((s,t)=>s+Number(t.amount),0)/1000).toFixed(1)+'k';
+      document.getElementById('dVolToday').textContent = fmt((vol || []).reduce((sum, tx) => sum + Number(tx.amount || 0), 0));
     }
 
     async function loadList(tabType) {
@@ -116,7 +118,7 @@
           .limit(50);
 
         if (tabType === 'pending') query.eq('status', 'pending');
-        else if (tabType === 'paid') query.eq('status', 'paid');
+        else if (tabType === 'paid') query.in('status', ['paid', 'approved']);
 
         const { data: txs } = await query;
 
@@ -127,8 +129,8 @@
 
         container.innerHTML = txs.map(t => {
           // Common Elements
-          const userDisplay = t.users?.full_name || 'Unknown User';
-          const userEmail = t.users?.email || '';
+          const userDisplay = esc(t.users?.full_name || 'Unknown User');
+          const userEmail = esc(t.users?.email || '');
           const dateStr = new Date(t.created_at).toLocaleString();
           
           // Specific Rendering based on Tab
@@ -138,11 +140,11 @@
               <div class="adm-row-top">
                 <div>
                   <div class="adm-name">${userDisplay}</div>
-                  <div class="adm-sub">${userEmail}<br>${dateStr}</div>
-                  
-                  <!-- TRACE ID BADGE (Clickable to Copy) -->
-                  <div class="trace-id-badge" onclick="copyTrace('${t.merchant_order_id}')">
-                    <span>ID:</span> ${t.merchant_order_id}
+                  <div class="adm-sub">${userEmail}<br>${esc(dateStr)}</div>
+                  <div class="adm-sub" style="margin-top:8px;">
+                    <strong>Sender:</strong> ${esc(t.sender_name || 'Not provided')}<br>
+                    <strong>Bank used:</strong> ${esc(t.sender_bank || 'Not provided')}<br>
+                    <strong>Transfer reference:</strong> ${esc(t.reference_number || 'Not provided')}
                   </div>
                 </div>
                 <div style="text-align:right;">
@@ -152,9 +154,8 @@
               </div>
               
               <div class="adm-actions" style="margin-top:12px;">
-                <button class="adm-btn ok" onclick="depAct('admin-deposit-verify','${t.merchant_order_id}')">🔄 Verify Gateway & Credit</button>
-                <button class="adm-btn warn" onclick="depAct('admin-deposit-credit','${t.merchant_order_id}')">💳 Force Credit</button>
-                <button class="adm-btn no" onclick="depAct('admin-deposit-fail','${t.merchant_order_id}')">✕ Mark Failed</button>
+                <button class="adm-btn ok" onclick="depAct('approve',${jsArg(t.id)})">✅ Verify Transfer & Credit</button>
+                <button class="adm-btn no" onclick="depAct('reject',${jsArg(t.id)})">✕ Reject Request</button>
               </div>
             </div>`;
           } else {
@@ -164,7 +165,7 @@
               <div class="adm-row-top">
                 <div>
                   <div class="adm-name">${userDisplay}</div>
-                  <div class="adm-sub">${userEmail} • Ref: ${(t.provider_order_id||'N/A').slice(-6)}<br>${dateStr}</div>
+                  <div class="adm-sub">${userEmail} • ${esc(t.sender_bank || 'Bank transfer')}<br>${esc(dateStr)}</div>
                 </div>
                 <div style="text-align:right;">
                   <div class="adm-amt green">${fmt(t.amount)}</div>
@@ -182,26 +183,25 @@
     }
 
     // --- ACTIONS ---
-    async function depAct(action, orderId) {
-      const msgs = {
-        'admin-deposit-verify': 'Query gateway status and credit if paid?',
-        'admin-deposit-credit': 'FORCE credit this deposit without checking gateway?',
-        'admin-deposit-fail': 'Mark this deposit as FAILED permanently?'
-      };
-      if (!confirm(msgs[action])) return;
+    async function depAct(action, transactionId) {
+      const reason = action === 'reject' ? prompt('Reason for rejecting this transfer (optional):') : '';
+      if (action === 'reject' && reason === null) return;
+      const message = action === 'approve'
+        ? 'Confirm that the bank transfer was received and credit the member wallet?'
+        : 'Reject this manual bank-transfer request?';
+      if (!confirm(message)) return;
 
-      const res = await fetch('/api/payments/otpay', {
+      const res = await fetch('/api/admin/manual-deposit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SESSION.access_token },
-        body: JSON.stringify({ action, merchantOrderId: orderId })
+        body: JSON.stringify({ action, transaction_id: transactionId, reason })
       });
-      
       const d = await res.json();
-      CniAuth.toast(d.ok ? (d.message || 'Success') : d.error, d.ok ? 'success' : 'error');
-      
-      // Refresh current view
-      loadList(CURRENT_TAB);
-      updateStats();
+      CniAuth.toast(d.ok ? (d.message || 'Success') : (d.error || 'Could not process deposit'), d.ok ? 'success' : 'error');
+      if (d.ok) {
+        loadList(CURRENT_TAB);
+        updateStats();
+      }
     }
 
     function copyTrace(id) {
